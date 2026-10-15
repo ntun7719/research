@@ -347,6 +347,7 @@ function renderStatus() {
   renderTopology(s, state.config);
   renderDGA(threat);
   updateSnoozeUI(s.pause_blocking);
+  renderSchedule(s.schedule, s.schedule_active);
 }
 
 function updateSnoozeUI(status) {
@@ -690,7 +691,96 @@ function renderChart(series) {
     '<path class="chart-area-blocked" d="' + blockedAreaPath + '"></path>' +
     '<path class="chart-line-total" d="' + totalLinePath + '"></path>' +
     '<path class="chart-line-blocked" d="' + blockedLinePath + '"></path>' +
-    dots;
+    dots +
+    '<line id="chart-crosshair" class="chart-crosshair hidden" x1="0" x2="0" y1="' + padTop + '" y2="' + bottomY + '"></line>' +
+    '<circle id="chart-halo-total" class="chart-halo-total hidden" cx="0" cy="0" r="6"></circle>' +
+    '<circle id="chart-halo-blocked" class="chart-halo-blocked hidden" cx="0" cy="0" r="5.5"></circle>';
+
+  const handleScrub = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const relX = ((clientX - rect.left) / rect.width) * width;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    totalPoints.forEach((pt, idx) => {
+      const dist = Math.abs(pt.x - relX);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = idx;
+      }
+    });
+    const tPt = totalPoints[bestIdx];
+    const bPt = blockedPoints[bestIdx];
+    const bucketObj = series[bestIdx] || series[0];
+    const cross = $("#chart-crosshair");
+    const hTot = $("#chart-halo-total");
+    const hBlk = $("#chart-halo-blocked");
+    const readout = $("#chart-hover-readout");
+    if (cross && tPt) {
+      cross.setAttribute("x1", String(tPt.x));
+      cross.setAttribute("x2", String(tPt.x));
+      cross.classList.remove("hidden");
+    }
+    if (hTot && tPt) {
+      hTot.setAttribute("cx", String(tPt.x));
+      hTot.setAttribute("cy", String(tPt.y));
+      hTot.classList.remove("hidden");
+    }
+    if (hBlk && bPt) {
+      hBlk.setAttribute("cx", String(bPt.x));
+      hBlk.setAttribute("cy", String(bPt.y));
+      hBlk.classList.remove("hidden");
+    }
+    if (readout && bucketObj) {
+      const d = new Date(Number(bucketObj.bucket || 0) * 1000);
+      const tLabel = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      const totVal = Number(bucketObj.total || 0);
+      const blkVal = Number(bucketObj.blocked || 0);
+      const pct = totVal ? ((blkVal / totVal) * 100).toFixed(0) : "0";
+      readout.textContent = tLabel + " • " + number(totVal) + " queries • " + number(blkVal) + " blocked (" + pct + "%)";
+      readout.classList.remove("hidden");
+    }
+  };
+
+  svg.onmousemove = (e) => handleScrub(e.clientX);
+  svg.ontouchmove = (e) => {
+    if (e.touches && e.touches[0]) handleScrub(e.touches[0].clientX);
+  };
+  svg.onmouseleave = () => {
+    $("#chart-crosshair")?.classList.add("hidden");
+    $("#chart-halo-total")?.classList.add("hidden");
+    $("#chart-halo-blocked")?.classList.add("hidden");
+    $("#chart-hover-readout")?.classList.add("hidden");
+  };
+}
+
+function renderSchedule(sched, isActive) {
+  if (!sched) return;
+  const badge = $("#schedule-status-badge");
+  const enabledInput = $("#sched-enabled");
+  const startInput = $("#sched-start");
+  const endInput = $("#sched-end");
+  if (enabledInput && document.activeElement !== enabledInput) {
+    enabledInput.checked = Boolean(sched.enabled);
+  }
+  if (startInput && document.activeElement !== startInput) {
+    startInput.value = sched.start || "22:00";
+  }
+  if (endInput && document.activeElement !== endInput) {
+    endInput.value = sched.end || "07:00";
+  }
+  if (badge) {
+    if (!sched.enabled) {
+      badge.className = "badge info";
+      badge.textContent = "Standby";
+    } else if (isActive) {
+      badge.className = "badge blocked";
+      badge.textContent = "Active Window (" + sched.start + "–" + sched.end + ")";
+    } else {
+      badge.className = "badge allowed";
+      badge.textContent = "Armed (" + sched.start + "–" + sched.end + ")";
+    }
+  }
 }
 
 function renderL1CacheEntries(entries) {
@@ -1056,7 +1146,8 @@ function renderFeeds() {
               '<i class="status-dot ' + (feed.error ? "bad" : feed.enabled ? "good" : "neutral") + '"></i>' +
               '<div class="list-row-copy">' +
                 "<strong>" + escapeHtml(feed.name) + "</strong>" +
-                "<small>" + escapeHtml(feed.category) + " • " + number(feed.domain_count) + " domains • " + escapeHtml(feed.url) + (feed.error ? " (" + escapeHtml(feed.error) + ")" : "") + "</small>" +
+                "<small><span class=\"badge info\">" + escapeHtml(feed.category) + "</span> • <strong>" + number(feed.domain_count) + "</strong> domains</small>" +
+                '<small class="feed-url-line">' + escapeHtml(feed.url) + (feed.error ? ' <span class="text-red">(' + escapeHtml(feed.error) + ")</span>" : "") + "</small>" +
               "</div>" +
             "</div>" +
             '<div class="list-row-meta">' +
@@ -1150,6 +1241,7 @@ function renderDevices() {
         "<td>" + ago(dev.last_seen) + "</td>" +
         '<td class="cell-right">' +
           '<div class="button-row">' +
+            '<button type="button" class="btn-mini-action logs-dev-btn" data-ip="' + escapeHtml(dev.ip) + '">Logs</button>' +
             '<button type="button" class="btn-mini-action save-dev-btn" data-ip="' + escapeHtml(dev.ip) + '">Save</button>' +
             '<button type="button" class="btn-mini-action del-dev-btn" data-ip="' + escapeHtml(dev.ip) + '">×</button>' +
           "</div>" +
@@ -1157,6 +1249,17 @@ function renderDevices() {
       "</tr>"
     );
   }).join("");
+
+  $$(".logs-dev-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const ip = btn.dataset.ip;
+      switchPage("queries");
+      if ($("#query-search")) {
+        $("#query-search").value = ip;
+        loadQueries().catch(() => {});
+      }
+    });
+  });
 
   $$(".save-dev-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -1401,6 +1504,8 @@ function renderPrivateForm() {
   if ($("#instruction-hostname")) $("#instruction-hostname").textContent = hostText;
   if ($("#instruction-doh")) $("#instruction-doh").textContent = "https://" + hostText + "/dns-query";
   if ($("#instruction-railway-doh")) $("#instruction-railway-doh").textContent = "https://" + hostText + "/dns-query";
+  if ($("#instruction-curl")) $("#instruction-curl").textContent = 'curl -s "https://' + hostText + '/dns-query?name=example.com&type=A"';
+  if ($("#instruction-router")) $("#instruction-router").textContent = "[Resolve]\nDNS=1.1.1.1#" + hostText + "\nDNSOverTLS=yes";
 }
 
 function toggleFrpFields() {
@@ -2108,7 +2213,7 @@ function bindEvents() {
     btn.addEventListener("click", () => {
       $$(".platform-tab-btn").forEach(b => b.classList.toggle("active", b === btn));
       const plat = btn.dataset.platform;
-      ["android", "railway", "apple", "browser", "curl"].forEach(id => {
+      ["android", "railway", "apple", "browser", "router", "curl"].forEach(id => {
         const el = $("#platform-instructions-" + id);
         if (el) el.classList.toggle("hidden", id !== plat);
       });
@@ -2330,13 +2435,64 @@ function bindEvents() {
     }
   });
 
+  // Scheduled Curfew & Deep Focus Engine
+  let selectedSchedMode = "bedtime";
+  $$(".sched-preset-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      selectedSchedMode = btn.dataset.mode || "bedtime";
+      if ($("#sched-start")) $("#sched-start").value = btn.dataset.start || "22:00";
+      if ($("#sched-end")) $("#sched-end").value = btn.dataset.end || "07:00";
+      if ($("#sched-enabled")) $("#sched-enabled").checked = true;
+      try {
+        const res = await api("/api/schedule", {
+          method: "POST",
+          body: {
+            enabled: true,
+            mode: selectedSchedMode,
+            start: $("#sched-start").value,
+            end: $("#sched-end").value
+          }
+        });
+        renderSchedule(res.schedule, res.active);
+        toast("Activated " + btn.textContent + " schedule");
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  });
+
+  const saveScheduleFromUI = async () => {
+    try {
+      const res = await api("/api/schedule", {
+        method: "POST",
+        body: {
+          enabled: Boolean($("#sched-enabled")?.checked),
+          mode: selectedSchedMode,
+          start: $("#sched-start")?.value || "22:00",
+          end: $("#sched-end")?.value || "07:00"
+        }
+      });
+      renderSchedule(res.schedule, res.active);
+      toast(res.schedule.enabled ? "Scheduled blocking window saved" : "Schedule disabled");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+  $("#save-schedule-btn")?.addEventListener("click", saveScheduleFromUI);
+  $("#sched-enabled")?.addEventListener("change", saveScheduleFromUI);
+
   // Collapsible Onboarding Checklist
+  if (localStorage.getItem("lattice_setup_collapsed") === "1") {
+    $("#setup-guide")?.classList.add("collapsed");
+    if ($("#toggle-setup-guide-btn")) $("#toggle-setup-guide-btn").textContent = "Expand";
+  }
   $("#toggle-setup-guide-btn")?.addEventListener("click", () => {
     const guide = $("#setup-guide");
     const btn = $("#toggle-setup-guide-btn");
     if (!guide || !btn) return;
     const collapsed = guide.classList.toggle("collapsed");
     btn.textContent = collapsed ? "Expand" : "Collapse";
+    localStorage.setItem("lattice_setup_collapsed", collapsed ? "1" : "0");
   });
 
   // QR Provisioning Mode Pills
@@ -2366,6 +2522,8 @@ function bindEvents() {
       { title: "Run Live DoT Upstream Benchmark", sub: "Compare Cloudflare, Quad9, Google, AdGuard & Mullvad", badge: "Action", run: () => { switchPage("dns"); $("#run-benchmark-btn")?.click(); } },
       { title: "Pause Policy Blocking for 5 Minutes", sub: "Temporarily bypass blocklists and rules", badge: "Snooze", run: async () => { const res = await api("/api/blocking/pause", { method: "POST", body: { seconds: 300 } }); updateSnoozeUI(res); toast("Blocking paused for 5m"); } },
       { title: "Resume Policy Blocking Immediately", sub: "Re-enable all blocklists and custom rules", badge: "Policy", run: async () => { const res = await api("/api/blocking/pause", { method: "POST", body: { seconds: 0 } }); updateSnoozeUI(res); toast("Policy blocking resumed"); } },
+      { title: "Enable Bedtime Curfew Schedule (22:00–07:00)", sub: "Block social, video & gaming overnight automatically", badge: "Schedule", run: async () => { const res = await api("/api/schedule", { method: "POST", body: { enabled: true, mode: "bedtime", start: "22:00", end: "07:00" } }); renderSchedule(res.schedule, res.active); toast("Bedtime Curfew Schedule enabled"); } },
+      { title: "Enable Deep Work / Study Schedule (09:00–17:00)", sub: "Block distractions during daytime work/study hours", badge: "Schedule", run: async () => { const res = await api("/api/schedule", { method: "POST", body: { enabled: true, mode: "focus", start: "09:00", end: "17:00" } }); renderSchedule(res.schedule, res.active); toast("Deep Work Schedule enabled"); } },
       { title: "Toggle Dark / Light Theme", sub: "Switch control plane color palette", badge: "UI", run: () => $("#theme-toggle")?.click() }
     ];
 

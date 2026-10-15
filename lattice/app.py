@@ -182,6 +182,8 @@ class Lattice:
             "frp": self.frp.status(),
             "policy": self.policy.status(),
             "pause_blocking": self.store.blocking_pause_status(),
+            "schedule": self.store.get_schedule(),
+            "schedule_active": self.store.is_schedule_active()[0],
             "devices": self.store.get_devices(),
             "dashboard": self.store.dashboard(window=window),
             "threat": self.store.threat_snapshot(),
@@ -842,12 +844,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
 
+            if path == "/api/schedule":
+                sched = self.app.store.get_schedule()
+                active, _ = self.app.store.is_schedule_active()
+                return self._json(200, {"schedule": sched, "active": active})
             if path == "/api/rules/presets":
                 return self._json(200, self.app.store.get_presets_status())
             if path == "/api/status":
                 params = urllib.parse.parse_qs(parsed.query)
                 window = int(params.get("window", ["86400"])[0]) if params.get("window") else 86400
                 return self._json(200, self.app.status(window=window))
+            if path == "/api/schedule":
+                sched = self.app.store.set_schedule(body)
+                self.app.policy.compile()
+                self.app.gateway.cache.clear()
+                active, _ = self.app.store.is_schedule_active()
+                return self._json(200, {"ok": True, "schedule": sched, "active": active})
             if path == "/api/blocking/pause":
                 return self._json(200, self.app.store.blocking_pause_status())
             if path == "/api/devices":
@@ -998,6 +1010,13 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/feeds/bundle":
                 return self._json(200, self.app.install_recommended_feeds())
+            if path == "/api/schedule":
+                body = self._body()
+                sched = self.app.store.set_schedule(body)
+                self.app.policy.compile()
+                self.app.gateway.cache.clear()
+                active, _ = self.app.store.is_schedule_active()
+                return self._json(200, {"ok": True, "schedule": sched, "active": active})
             if path == "/api/upstreams/benchmark":
                 body = self._body()
                 domain_name = str(body.get("domain", "cloudflare.com")).strip() or "cloudflare.com"

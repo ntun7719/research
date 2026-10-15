@@ -888,5 +888,43 @@ class FlagshipV5Tests(unittest.TestCase):
         self.assertIsNone(cache.get("ttltest.example.com", 1, True, b"\x56\x78", allow_stale=False))
 
 
+
+    def test_focus_and_bedtime_schedule_engine(self):
+        # 24/7 schedule window (00:00 -> 23:59) blocking tiktok & youtube
+        self.store.set_schedule({
+            "enabled": True,
+            "mode": "bedtime",
+            "start": "00:00",
+            "end": "23:59",
+            "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "presets": ["tiktok", "youtube"],
+            "categories": ["social"],
+            "profile": "*",
+        })
+        active, sched = self.store.is_schedule_active()
+        self.assertTrue(active)
+        self.assertEqual(sched["mode"], "bedtime")
+
+        dec_tt = self.policy.decide("192.168.1.42", "www.tiktok.com")
+        self.assertEqual(dec_tt.action, "deny")
+        self.assertIn("schedule:bedtime:tiktok", dec_tt.source)
+
+        # Android connectivity probe must still be protected even during active schedule!
+        dec_android = self.policy.decide("192.168.1.42", "connectivitycheck.gstatic.com")
+        self.assertEqual(dec_android.action, "allow")
+
+        # Disable schedule -> tiktok allowed again
+        self.store.set_schedule({"enabled": False})
+        self.assertEqual(self.policy.decide("192.168.1.42", "www.tiktok.com").action, "allow")
+
+    def test_forensic_rule_pattern_attribution(self):
+        self.store.add_rule("tracker.bad.org", "suffix", "deny", "", "*", None)
+        self.policy.compile()
+        dec = self.policy.decide("192.168.1.10", "sub.tracker.bad.org")
+        self.assertEqual(dec.action, "deny")
+        self.assertTrue(dec.source.startswith("rule:"))
+        self.assertIn("tracker.bad.org", dec.source)
+
+
 if __name__ == "__main__":
     unittest.main()

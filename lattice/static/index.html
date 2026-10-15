@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080c10">
-  <title>Lattice DNS — Gemini Ultra Control Plane</title>
+  <title>Lattice DNS — Gemini Sovereign Control Plane</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
 </head>
@@ -23,7 +23,7 @@
         <div class="auth-brand-text">
           <div class="brand-title-row">
             <strong>Lattice DNS</strong>
-            <span class="edition-pill">Gemini Ultra</span>
+            <span class="edition-pill">Gemini Sovereign</span>
           </div>
           <span>Encrypted DoT &amp; DoH Control Plane</span>
         </div>
@@ -62,7 +62,7 @@
             <strong>Lattice DNS</strong>
             <span class="edition-tag">Gemini</span>
           </div>
-          <span id="rail-version">Version 6.0.0</span>
+          <span id="rail-version">Version 7.0.0</span>
         </div>
         <button id="close-nav" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button>
       </div>
@@ -326,8 +326,11 @@
           <article class="card chart-card">
             <div class="card-header">
               <div>
-                <h2>Query &amp; Threat Telemetry</h2>
-                <p>Time-bucketed total query volume versus policy-blocked requests.</p>
+                <div class="title-with-pill">
+                  <h2>Query &amp; Threat Telemetry</h2>
+                  <span id="chart-hover-readout" class="badge info hidden"></span>
+                </div>
+                <p>Hover or touch across the timeline to inspect per-bucket query volume and block ratios.</p>
               </div>
               <div class="legend">
                 <span><i class="legend-dot total"></i>Total Queries</span>
@@ -682,6 +685,46 @@
 
         <!-- TAB 2: CUSTOM RULES & QUICK PRESETS -->
         <div id="blocking-rules" class="block-tab">
+          <article class="card accent-card" id="schedule-card">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>Scheduled Curfew &amp; Deep Focus Engine</h2>
+                  <span id="schedule-status-badge" class="badge info">Standby</span>
+                </div>
+                <p>Automatically block distracting social platforms, video streams, and gaming networks during study, work, or sleep hours.</p>
+              </div>
+              <button id="save-schedule-btn" type="button" class="button primary">Save Schedule</button>
+            </div>
+            <div class="curated-feeds-box schedule-presets-bar">
+              <span class="curated-label">1-Click Schedule Templates:</span>
+              <div class="button-row">
+                <button type="button" class="btn-chip sched-preset-btn" data-mode="bedtime" data-start="22:00" data-end="07:00">Bedtime Curfew (22:00–07:00)</button>
+                <button type="button" class="btn-chip sched-preset-btn" data-mode="focus" data-start="09:00" data-end="17:00">Deep Work / Study (09:00–17:00)</button>
+                <button type="button" class="btn-chip sched-preset-btn" data-mode="kids" data-start="00:00" data-end="23:59">24/7 Kids Safe Mode</button>
+              </div>
+            </div>
+            <div class="form-grid schedule-form-grid">
+              <label class="setting-row">
+                <span>
+                  <strong>Enable Scheduled Blocking Window</strong>
+                  <small id="schedule-summary-text">Blocks TikTok, Meta, YouTube, Gaming, Snapchat &amp; Reddit during active window.</small>
+                </span>
+                <input id="sched-enabled" type="checkbox" class="switch-input">
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Window Start (24h)</span>
+                  <input id="sched-start" type="time" value="22:00">
+                </label>
+                <label class="field">
+                  <span>Window End (24h)</span>
+                  <input id="sched-end" type="time" value="07:00">
+                </label>
+              </div>
+            </div>
+          </article>
+
           <article class="card">
             <div class="card-header">
               <div>
@@ -1047,6 +1090,7 @@
                 <button type="button" class="platform-tab-btn" data-platform="railway">Railway / Cloud DoH (Port 443)</button>
                 <button type="button" class="platform-tab-btn" data-platform="apple">Apple iOS &amp; macOS</button>
                 <button type="button" class="platform-tab-btn" data-platform="browser">Web Browsers (DoH)</button>
+                <button type="button" class="platform-tab-btn" data-platform="router">Linux / Router DoT</button>
                 <button type="button" class="platform-tab-btn" data-platform="curl">CLI / RFC 8484 &amp; JSON</button>
               </div>
               <div id="platform-instructions-android" class="instruction-steps">
@@ -1068,9 +1112,15 @@
                 <span>1. In Chrome, Brave, Edge, or Firefox, open <strong>Privacy &amp; Security</strong> → <strong>Use Secure DNS</strong>.</span>
                 <span>2. Select <strong>Custom Provider</strong> and enter: <code id="instruction-doh" class="code-pill">https://.../dns-query</code></span>
               </div>
+              <div id="platform-instructions-router" class="instruction-steps hidden">
+                <span>Configure <strong>systemd-resolved</strong> (<code>/etc/systemd/resolved.conf</code>) or OpenWrt/MikroTik DoT:</span>
+                <code id="instruction-router" class="code-pill">[Resolve]
+DNS=1.1.1.1#dns.example.com
+DNSOverTLS=yes</code>
+              </div>
               <div id="platform-instructions-curl" class="instruction-steps hidden">
                 <span>Test RFC 8427 JSON or RFC 8484 Wireformat DoH from any terminal:</span>
-                <code class="code-pill">curl -s "http://127.0.0.1:8080/dns-query?name=example.com&amp;type=A"</code>
+                <code id="instruction-curl" class="code-pill">curl -s "https://dns.example.com/dns-query?name=example.com&amp;type=A"</code>
               </div>
             </div>
             <div class="qr-provision-card" id="qr-provision-panel">
@@ -1383,7 +1433,7 @@
         <article class="card account-card">
           <div>
             <h2>Administrator Session</h2>
-            <p class="muted">Lattice DNS <span id="system-version">6.0.0-gemini-ultra</span> • Memory-resident CSRF-protected session</p>
+            <p class="muted">Lattice DNS <span id="system-version">7.0.0-gemini-sovereign</span> • Memory-resident CSRF-protected session</p>
           </div>
           <button id="logout" type="button" class="button secondary">Sign Out</button>
         </article>

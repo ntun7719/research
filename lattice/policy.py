@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import hostname
+from .store import PRESETS
 
 # Match only actual Google Search hostnames (e.g. google.com, www.google.com, www.google.com.sg, www.google.co.uk)
 # Never hijack Android system subdomains like clients3.google.com, play.google.com, mtalk.google.com, dl.google.com!
@@ -240,12 +241,13 @@ class Policy:
             return Decision("allow", "policy:root", profile["id"])
         row = self._rule(profile["id"], name)
         if row:
+            rule_label = f"rule:{row['id']} ({row['pattern']})"
             if row["action"] == "rewrite":
-                return Decision(row["action"], f"rule:{row['id']}", profile["id"], row["value"])
+                return Decision(row["action"], rule_label, profile["id"], row["value"])
             if row["action"] == "allow":
-                return Decision("allow", f"rule:{row['id']}", profile["id"], row["value"])
+                return Decision("allow", rule_label, profile["id"], row["value"])
             if not self.store.is_blocking_paused():
-                return Decision(row["action"], f"rule:{row['id']}", profile["id"], row["value"])
+                return Decision(row["action"], rule_label, profile["id"], row["value"])
         if self.store.is_blocking_paused():
             return Decision("allow", "policy:snoozed", profile["id"])
         if self.store.config.get("safesearch", False):
@@ -253,7 +255,21 @@ class Policy:
             if ss:
                 target_ip, engine = ss
                 return Decision("rewrite", engine, profile["id"], target_ip)
-        match = self._feed_match(name, profile["categories"])
+
+        active_categories = list(profile["categories"])
+        sched_active, sched = self.store.is_schedule_active()
+        if sched_active and sched.get("profile", "*") in ("*", profile["id"]):
+            if not is_android_essential(name, self.store.config.get("hostname", "")):
+                parents_set = set(self.parents(name))
+                for preset_id in sched.get("presets", []):
+                    preset_obj = PRESETS.get(preset_id)
+                    if preset_obj and any(d in parents_set for d in preset_obj["domains"]):
+                        return Decision("deny", f"schedule:{sched.get('mode', 'curfew')}:{preset_id}", profile["id"])
+                for extra_cat in sched.get("categories", []):
+                    if extra_cat not in active_categories:
+                        active_categories.append(extra_cat)
+
+        match = self._feed_match(name, active_categories)
         if match:
             domain, feed = match
             return Decision("deny", f"feed:{feed}:{domain}", profile["id"])

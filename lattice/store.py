@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import collections
+import copy
 import csv
 import hashlib
 import hmac
@@ -21,6 +22,18 @@ from typing import Any
 from cryptography.fernet import Fernet
 
 from .config import DEFAULT_CONFIG, hostname, validate_config
+
+DEFAULT_SCHEDULE = {
+    "enabled": False,
+    "mode": "bedtime",
+    "start": "22:00",
+    "end": "07:00",
+    "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+    "presets": ["tiktok", "meta", "youtube", "gaming", "snapchat", "reddit"],
+    "categories": ["social", "adult"],
+    "profile": "*",
+}
+
 
 
 def shannon_entropy(text: str) -> float:
@@ -840,6 +853,66 @@ class Store:
                     )
                     added += 1
         return {"ok": True, "added": added, "installed": added, "total_bundle": len(RECOMMENDED_FEED_BUNDLE), "feeds": self.feed_rows()}
+
+    def get_schedule(self) -> dict[str, Any]:
+        raw = self.meta("focus_schedule", None)
+        if not isinstance(raw, dict):
+            return copy.deepcopy(DEFAULT_SCHEDULE)
+        merged = copy.deepcopy(DEFAULT_SCHEDULE)
+        for k in merged:
+            if k in raw:
+                merged[k] = raw[k]
+        return merged
+
+    def set_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
+        current = self.get_schedule()
+        if not isinstance(payload, dict):
+            raise ValueError("Schedule payload must be an object")
+        if "enabled" in payload:
+            current["enabled"] = bool(payload["enabled"])
+        if "mode" in payload and str(payload["mode"]) in ("bedtime", "focus", "kids", "custom"):
+            current["mode"] = str(payload["mode"])
+        for t_field in ("start", "end"):
+            if t_field in payload:
+                val = str(payload[t_field]).strip()
+                parts = val.split(":")
+                if len(parts) != 2 or not (0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59):
+                    raise ValueError(f"Invalid schedule {t_field} time (expected HH:MM)")
+                current[t_field] = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        if "days" in payload and isinstance(payload["days"], list):
+            valid_days = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+            current["days"] = [str(d).lower()[:3] for d in payload["days"] if str(d).lower()[:3] in valid_days] or ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        if "presets" in payload and isinstance(payload["presets"], list):
+            current["presets"] = [str(p) for p in payload["presets"] if str(p) in PRESETS]
+        if "categories" in payload and isinstance(payload["categories"], list):
+            current["categories"] = [str(c).strip().lower() for c in payload["categories"] if str(c).strip()]
+        if "profile" in payload:
+            current["profile"] = str(payload["profile"] or "*")
+        self.set_meta("focus_schedule", current)
+        self.audit("Schedule updated", f"enabled={current['enabled']} ({current['start']}-{current['end']})")
+        return current
+
+    def is_schedule_active(self, now_ts: float | None = None) -> tuple[bool, dict[str, Any]]:
+        sched = self.get_schedule()
+        if not sched.get("enabled"):
+            return False, sched
+        tm = time.localtime(now_ts if now_ts is not None else time.time())
+        day_name = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[tm.tm_wday]
+        if day_name not in sched.get("days", []):
+            return False, sched
+        try:
+            sh, sm = (int(x) for x in sched["start"].split(":"))
+            eh, em = (int(x) for x in sched["end"].split(":"))
+        except Exception:
+            return False, sched
+        start_min = sh * 60 + sm
+        end_min = eh * 60 + em
+        cur_min = tm.tm_hour * 60 + tm.tm_min
+        if start_min <= end_min:
+            active = start_min <= cur_min <= end_min
+        else:
+            active = cur_min >= start_min or cur_min <= end_min
+        return active, sched
 
     def close(self) -> None:
         with self.lock:
