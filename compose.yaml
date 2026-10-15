@@ -1,0 +1,21 @@
+services:
+  lattice:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "853:8853"
+    volumes:
+      - lattice-data:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  lattice-data:
