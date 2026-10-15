@@ -1,0 +1,1313 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080c10">
+  <title>Lattice DNS — Gemini Control Plane</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <!-- AUTHENTICATION GATE -->
+  <div id="auth" class="auth-shell hidden">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+            <polyline points="2 17 12 22 22 17"/>
+            <polyline points="2 12 12 17 22 12"/>
+          </svg>
+        </div>
+        <div class="auth-brand-text">
+          <div class="brand-title-row">
+            <strong>Lattice DNS</strong>
+            <span class="edition-pill">Gemini Edition</span>
+          </div>
+          <span>Encrypted DoT &amp; DoH Control Plane</span>
+        </div>
+      </div>
+      <h1 id="auth-title">Administrator Sign In</h1>
+      <p id="auth-copy" class="muted">Authenticate to manage DNS over TLS, policy filtering, Unbound resolution, and FRP edge transport.</p>
+      <form id="auth-form" class="stack">
+        <label id="setup-code-wrap" class="field hidden">
+          <span>First-time setup code</span>
+          <input id="setup-code" autocomplete="one-time-code" placeholder="Paste setup token from container logs">
+          <small>Printed once on initial startup to initialize the administrator account.</small>
+        </label>
+        <label class="field">
+          <span>Administrator password</span>
+          <input id="password" type="password" autocomplete="current-password" minlength="10" required placeholder="Minimum 10 characters">
+        </label>
+        <button class="button primary wide" type="submit">Unlock Control Plane</button>
+        <p id="auth-error" class="form-error"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- MAIN APPLICATION WORKSPACE -->
+  <div id="shell" class="app-shell hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="logo small">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+            <polyline points="2 17 12 22 22 17"/>
+            <polyline points="2 12 12 17 22 12"/>
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <div class="brand-title-row">
+            <strong>Lattice DNS</strong>
+            <span class="edition-tag">Gemini</span>
+          </div>
+          <span id="rail-version">Version 1.0.0</span>
+        </div>
+        <button id="close-nav" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button>
+      </div>
+
+      <div class="nav-group-label">Operations</div>
+      <nav class="side-nav">
+        <button class="nav-item active" type="button" data-page="dashboard">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+          </span>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" type="button" data-page="queries">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </span>
+          <span>Query Log</span>
+        </button>
+        <button class="nav-item" type="button" data-page="blocking">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </span>
+          <span>Blocking</span>
+        </button>
+        <button class="nav-item" type="button" data-page="dns">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          </span>
+          <span>DNS Settings</span>
+        </button>
+        <button class="nav-item" type="button" data-page="private">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
+          <span>Private DNS</span>
+        </button>
+        <button class="nav-item" type="button" data-page="system">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </span>
+          <span>System</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-shortcuts">
+        <div class="shortcut-line"><span>Search log</span><kbd class="kbd-pill">/</kbd></div>
+        <div class="shortcut-line"><span>Refresh data</span><kbd class="kbd-pill">R</kbd></div>
+      </div>
+
+      <div class="sidebar-status">
+        <span id="system-dot" class="status-dot warn"></span>
+        <div class="sidebar-status-copy">
+          <strong id="rail-state">Checking DNS</strong>
+          <span id="sidebar-hostname">Not configured</span>
+        </div>
+      </div>
+    </aside>
+
+    <div id="nav-scrim" class="nav-scrim hidden"></div>
+
+    <main class="main">
+      <!-- TOP COMMAND BAR -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="open-nav" class="icon-button mobile-only" type="button" aria-label="Open navigation">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div>
+            <div class="topbar-title-row">
+              <h1 id="page-title">Dashboard</h1>
+              <span id="service-pill" class="badge allowed"><span class="pulse-indicator"></span>Operational</span>
+              <div id="snooze-indicator-wrap" class="hidden">
+                <button id="snooze-active-btn" type="button" class="badge warn clickable" title="Click to resume policy filtering immediately">
+                  <span id="snooze-timer-label">Blocking Paused — Resume</span>
+                </button>
+              </div>
+            </div>
+            <p id="page-description">Real-time encrypted DNS telemetry, policy enforcement, and upstream health.</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="dropdown-wrap">
+            <button id="snooze-btn" type="button" class="button secondary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
+              <span>Pause Blocking</span>
+            </button>
+            <div id="snooze-menu" class="dropdown-menu hidden">
+              <button type="button" class="dropdown-item" data-duration="300">Snooze 5 minutes</button>
+              <button type="button" class="dropdown-item" data-duration="900">Snooze 15 minutes</button>
+              <button type="button" class="dropdown-item" data-duration="3600">Snooze 1 hour</button>
+              <button type="button" class="dropdown-item danger" data-duration="0">Resume Blocking Now</button>
+            </div>
+          </div>
+          <button id="refresh" type="button" class="button secondary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Refresh</span>
+          </button>
+          <button id="theme-toggle" type="button" class="icon-button" aria-label="Toggle color theme" title="Toggle Dark / Light Mode">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+      <!-- ==================== 1. DASHBOARD PAGE ==================== -->
+      <section class="page active" id="page-dashboard">
+        <div id="setup-guide" class="setup-guide hidden">
+          <div class="setup-copy">
+            <span class="setup-badge">Onboarding Checklist</span>
+            <h2>Complete Android Private DNS Setup</h2>
+            <p>Your local Unbound validating resolver is active. Complete these 3 steps to serve DNS over TLS on port 853.</p>
+          </div>
+          <div id="setup-steps" class="setup-steps"></div>
+        </div>
+
+        <div class="dashboard-toolbar">
+          <div class="verdict-summary-pills" id="verdict-pills">
+            <span class="verdict-chip"><i class="dot-sm good"></i>Allowed: <strong id="pill-allowed">0</strong></span>
+            <span class="verdict-chip"><i class="dot-sm bad"></i>Blocked: <strong id="pill-blocked">0</strong></span>
+            <span class="verdict-chip"><i class="dot-sm purple"></i>Rewritten: <strong id="pill-rewritten">0</strong></span>
+            <span class="verdict-chip"><i class="dot-sm warn"></i>Errors: <strong id="pill-errors">0</strong></span>
+          </div>
+          <div class="time-range-picker">
+            <span class="time-range-label">Window</span>
+            <button type="button" class="time-btn" data-window="3600">1H</button>
+            <button type="button" class="time-btn" data-window="21600">6H</button>
+            <button type="button" class="time-btn active" data-window="86400">24H</button>
+            <button type="button" class="time-btn" data-window="604800">7D</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card accent-card">
+            <div class="stat-header">
+              <span class="stat-label">Data Plane Health</span>
+              <span class="stat-icon-wrap status-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </span>
+            </div>
+            <div class="stat-value status-value">
+              <span id="dashboard-status-dot" class="status-dot warn"></span>
+              <span id="dashboard-status">Checking</span>
+            </div>
+            <p id="dashboard-status-help">Verifying Unbound and DoT gateway.</p>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-header">
+              <span class="stat-label">Queries Handled</span>
+              <span class="stat-icon-wrap primary-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </span>
+            </div>
+            <div class="stat-value" id="queries-total">0</div>
+            <p id="queries-window-caption">Total DNS lookups in selected window.</p>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-header">
+              <span class="stat-label">Filtered &amp; Blocked</span>
+              <span class="stat-icon-wrap red-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </span>
+            </div>
+            <div class="stat-value text-red" id="blocked-rate">0.0%</div>
+            <p id="blocked-count">0 blocked requests.</p>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-header">
+              <span class="stat-label">Mean Resolution</span>
+              <span class="stat-icon-wrap green-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </span>
+            </div>
+            <div class="stat-value text-green" id="mean-latency">0.0 ms</div>
+            <p>Average round-trip lookup latency.</p>
+          </article>
+
+          <article class="stat-card">
+            <div class="stat-header">
+              <span class="stat-label">Active Endpoints</span>
+              <span class="stat-icon-wrap purple-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              </span>
+            </div>
+            <div class="stat-value text-purple" id="clients-total">0</div>
+            <p>Distinct client IPs observed.</p>
+          </article>
+        </div>
+
+        <article class="card topology-card">
+          <div class="card-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>Resolution Data Path</h2>
+                <span class="badge info">End-to-End DoT + DNSSEC</span>
+              </div>
+              <p>Live packet pipeline from client devices through policy evaluation to recursive upstream verification.</p>
+            </div>
+            <button type="button" class="text-button jump-page" data-target="private">Configure Transport →</button>
+          </div>
+          <div class="topology-grid">
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>Client Endpoints</strong>
+                <span id="topo-hostname-label">Android Private DNS / DoH</span>
+                <span class="node-pill">TLS 853 &amp; HTTPS</span>
+              </div>
+            </div>
+            <div class="topo-connector">→</div>
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>FRP Edge Bridge</strong>
+                <span id="topo-frp-state">Direct Listener</span>
+                <span class="node-pill">PROXY v1 IP Passthrough</span>
+              </div>
+            </div>
+            <div class="topo-connector">→</div>
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>Policy &amp; Bloom Engine</strong>
+                <span id="topo-policy-status">0 rules • 3 categories</span>
+                <span class="node-pill">O(1) Bloom + SQLite</span>
+              </div>
+            </div>
+            <div class="topo-connector">→</div>
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>Unbound Recursive Core</strong>
+                <span id="topo-upstream-status">Validating Upstreams</span>
+                <span class="node-pill">RFC 7858 DoT</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <div class="content-grid dashboard-grid">
+          <article class="card chart-card">
+            <div class="card-header">
+              <div>
+                <h2>Query &amp; Threat Telemetry</h2>
+                <p>Time-bucketed total query volume versus policy-blocked requests.</p>
+              </div>
+              <div class="legend">
+                <span><i class="legend-dot total"></i>Total Queries</span>
+                <span><i class="legend-dot blocked"></i>Blocked Threats</span>
+              </div>
+            </div>
+            <div class="chart-container">
+              <svg id="traffic-chart" viewBox="0 0 1000 250" preserveAspectRatio="none" aria-label="DNS traffic chart"></svg>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Transport &amp; TLS Readiness</h2>
+                <p>Core subsystems required for Android Private DNS.</p>
+              </div>
+              <button type="button" class="text-button jump-page" data-target="private">Manage →</button>
+            </div>
+            <div class="health-list">
+              <div class="health-row">
+                <span><i id="dot-listener" class="status-dot warn"></i>DoT Listener (8853)</span>
+                <strong id="dot-state">Checking</strong>
+              </div>
+              <div class="health-row">
+                <span><i id="dot-certificate" class="status-dot warn"></i>TLS Certificate</span>
+                <strong id="tls-state">Checking</strong>
+              </div>
+              <div class="health-row">
+                <span><i id="dot-frp" class="status-dot neutral"></i>FRP Edge Tunnel</span>
+                <strong id="frp-state">Disabled</strong>
+              </div>
+              <div class="health-row">
+                <span>Last DNS Query</span>
+                <strong id="last-query">Never</strong>
+              </div>
+            </div>
+            <div class="cert-countdown-box">
+              <div class="cert-countdown-label">
+                <span>Certificate Lifespan</span>
+                <strong id="cert-days-left">Not installed</strong>
+              </div>
+              <svg class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none">
+                <rect class="metric-bar-bg" width="100" height="6" rx="3"></rect>
+                <rect id="cert-progress-rect" class="metric-bar-fill good" width="0" height="6" rx="3"></rect>
+              </svg>
+            </div>
+          </article>
+        </div>
+
+        <div class="content-grid two">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Top Permitted Domains</h2>
+                <p>Most frequently resolved domains allowed by policy.</p>
+              </div>
+              <span class="badge allowed">Allowed</span>
+            </div>
+            <div id="top-allowed-list" class="ranked-list">
+              <div class="empty-state">No allowed domain queries recorded yet.</div>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Top Blocked Threats</h2>
+                <p>Most frequently intercepted ad, tracker, and malware domains.</p>
+              </div>
+              <span class="badge blocked">Blocked</span>
+            </div>
+            <div id="top-blocked-list" class="ranked-list">
+              <div class="empty-state">No blocked domains recorded in this window.</div>
+            </div>
+          </article>
+        </div>
+
+        <div class="content-grid two">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Top Client Endpoints</h2>
+                <p>Most active client devices and IP addresses with policy block ratios.</p>
+              </div>
+              <button type="button" class="text-button jump-page" data-target="blocking">Devices →</button>
+            </div>
+            <div id="top-clients-list" class="ranked-list">
+              <div class="empty-state">No client endpoint telemetry recorded yet.</div>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Query Record Type Distribution</h2>
+                <p>Breakdown of DNS lookups by resource record type (A, AAAA, HTTPS, SVCB, PTR).</p>
+              </div>
+              <span class="badge info">RFC Wire Types</span>
+            </div>
+            <div id="qtype-breakdown-list" class="ranked-list">
+              <div class="empty-state">No query type distribution recorded yet.</div>
+            </div>
+          </article>
+        </div>
+
+        <div class="content-grid two">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Upstream DoT Resolvers</h2>
+                <p>Live TLS health probes and round-trip latency to upstream servers.</p>
+              </div>
+              <button type="button" class="text-button jump-page" data-target="dns">Configure →</button>
+            </div>
+            <div id="upstream-health" class="list-stack"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Behavior Radar (Last 60m)</h2>
+                <p>Local anomaly indicators computed strictly on-device.</p>
+              </div>
+              <button type="button" class="text-button jump-page" data-target="blocking">Policy →</button>
+            </div>
+            <div class="mini-stats">
+              <div class="mini-stat-box">
+                <span class="mini-label">Indexed Blocklist Domains</span>
+                <strong id="policy-size" class="mini-val">0</strong>
+                <small>Active in Bloom filter</small>
+              </div>
+              <div class="mini-stat-box">
+                <span class="mini-label">Unique Domains (1h)</span>
+                <strong id="unique-domains" class="mini-val">0</strong>
+                <small>Distinct hostnames</small>
+              </div>
+              <div class="mini-stat-box">
+                <span class="mini-label">NXDOMAIN Ratio</span>
+                <strong id="nx-ratio" class="mini-val">0.0%</strong>
+                <small>Non-existent lookups</small>
+              </div>
+              <div class="mini-stat-box">
+                <span class="mini-label">Queries (Last Hour)</span>
+                <strong id="hour-queries" class="mini-val">0</strong>
+                <small>Rolling 60m volume</small>
+              </div>
+            </div>
+            <div id="dga-card" class="dga-alert-box hidden">
+              <div class="dga-header">
+                <strong>High-Entropy / Potential DGA Domains Detected</strong>
+                <span class="badge warn">Shannon Entropy ≥ 3.5</span>
+              </div>
+              <div id="dga-body" class="list-stack"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ==================== 2. QUERY LOG PAGE ==================== -->
+      <section class="page" id="page-queries">
+        <article class="card">
+          <div class="card-header query-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>Real-Time Query Journal</h2>
+                <button id="query-live-toggle" type="button" class="badge allowed clickable" title="Toggle live 3-second polling">
+                  <span class="pulse-indicator"></span>
+                  <span id="live-toggle-text">Live Stream (3s)</span>
+                </button>
+              </div>
+              <p>Click any query row to inspect packet forensics, policy attribution, and DNSSEC flags.</p>
+            </div>
+            <div class="toolbar">
+              <input id="query-search" class="compact-input search-box" placeholder="Filter domain, client IP, or device (/ to focus)...">
+              <select id="query-filter" class="compact-select">
+                <option value="all">All Verdicts</option>
+                <option value="allowed">Allowed</option>
+                <option value="blocked">Blocked</option>
+                <option value="rewritten">Rewritten</option>
+                <option value="refused">Refused</option>
+                <option value="error">Errors</option>
+              </select>
+              <select id="query-qtype-filter" class="compact-select">
+                <option value="0">All Types</option>
+                <option value="1">A (IPv4)</option>
+                <option value="28">AAAA (IPv6)</option>
+                <option value="65">HTTPS</option>
+                <option value="5">CNAME</option>
+                <option value="16">TXT</option>
+                <option value="15">MX</option>
+                <option value="12">PTR</option>
+              </select>
+              <button id="export-csv-btn" type="button" class="button secondary">Export CSV</button>
+              <button id="clear-queries-btn" type="button" class="button danger">Clear Log</button>
+              <button id="traffic-refresh" type="button" class="button primary">Reload</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-time">Time</th>
+                  <th>Domain</th>
+                  <th class="col-type">Type</th>
+                  <th class="col-verdict">Verdict</th>
+                  <th class="col-client">Client / Profile</th>
+                  <th class="col-latency">Latency</th>
+                  <th class="col-action">Quick Rule</th>
+                </tr>
+              </thead>
+              <tbody id="query-body"></tbody>
+            </table>
+          </div>
+          <div id="query-empty" class="empty-state hidden">No DNS queries match your current filters.</div>
+        </article>
+      </section>
+
+      <!-- FORENSIC QUERY INSPECTOR DRAWER -->
+      <div id="drawer-scrim" class="drawer-scrim hidden"></div>
+      <aside id="query-drawer" class="query-drawer hidden">
+        <div class="drawer-header">
+          <div>
+            <span class="drawer-eyebrow">Packet Forensics Inspector</span>
+            <h2 id="drawer-domain">example.com</h2>
+            <span id="drawer-verdict-badge" class="badge allowed">Allowed</span>
+          </div>
+          <button id="drawer-close" type="button" class="icon-button" aria-label="Close inspector">×</button>
+        </div>
+        <div class="drawer-body">
+          <div class="drawer-section">
+            <h3>Telemetry Metadata</h3>
+            <div class="health-list">
+              <div class="health-row"><span>Timestamp</span><strong id="drawer-time">—</strong></div>
+              <div class="health-row"><span>Client Endpoint</span><strong id="drawer-client">—</strong></div>
+              <div class="health-row"><span>Record Type</span><strong id="drawer-qtype">—</strong></div>
+              <div class="health-row"><span>DNS RCODE</span><strong id="drawer-rcode">—</strong></div>
+              <div class="health-row"><span>Resolution Time</span><strong id="drawer-latency">—</strong></div>
+            </div>
+          </div>
+          <div class="drawer-section">
+            <h3>Policy &amp; Attribution</h3>
+            <div class="health-list">
+              <div class="health-row"><span>Assigned Profile</span><strong id="drawer-profile">—</strong></div>
+              <div class="health-row"><span>Enforcement Decision</span><strong id="drawer-verdict">—</strong></div>
+              <div class="health-row"><span>Matched Rule / Feed</span><strong id="drawer-source">—</strong></div>
+            </div>
+          </div>
+          <div class="drawer-section">
+            <h3>DNS Header Flags</h3>
+            <div class="flags-grid">
+              <div class="flag-pill active"><span>QR</span><small>Response</small></div>
+              <div class="flag-pill active"><span>RD</span><small>Recursion</small></div>
+              <div class="flag-pill active"><span>RA</span><small>Available</small></div>
+              <div class="flag-pill" id="flag-ad"><span>AD</span><small>DNSSEC</small></div>
+              <div class="flag-pill" id="flag-cd"><span>CD</span><small>Unchecked</small></div>
+            </div>
+          </div>
+          <div class="drawer-section">
+            <h3>Domain Actions</h3>
+            <div class="button-row">
+              <button id="drawer-action-btn" type="button" class="button primary wide">Block Domain</button>
+              <button id="drawer-test-btn" type="button" class="button secondary wide">Trace in Diagnostic Simulator</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ==================== 3. BLOCKING PAGE ==================== -->
+      <section class="page" id="page-blocking">
+        <div class="subnav">
+          <button type="button" class="subnav-item active" data-block-tab="lists">Blocklists &amp; Categories</button>
+          <button type="button" class="subnav-item" data-block-tab="rules">Custom Rules &amp; Presets</button>
+          <button type="button" class="subnav-item" data-block-tab="devices">Client Devices &amp; Profiles</button>
+        </div>
+
+        <!-- PROTECTION CATEGORIES CARD -->
+        <article class="card protection-card">
+          <div class="card-header">
+            <div>
+              <h2>Enforced Protection Categories</h2>
+              <p>Select which threat and content categories are blocked for the Default client profile.</p>
+            </div>
+            <button id="save-protection" type="button" class="button primary">Save Protection</button>
+          </div>
+          <div id="category-grid" class="category-grid"></div>
+        </article>
+
+        <!-- TAB 1: SUBSCRIPTION BLOCKLISTS -->
+        <div id="blocking-lists" class="block-tab active">
+          <div class="content-grid blocking-layout">
+            <article class="card">
+              <div class="card-header">
+                <div>
+                  <h2>Subscription Blocklists</h2>
+                  <p>Remote hosts and AdBlock feeds indexed into the constant-time Bloom filter and SQLite engine.</p>
+                </div>
+                <button id="refresh-feeds" type="button" class="button secondary">Update All Lists</button>
+              </div>
+              <div id="feed-list" class="list-stack"></div>
+
+              <div class="curated-feeds-box">
+                <span class="curated-label">Quick-Fill Verified Public Feeds:</span>
+                <div class="button-row">
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="StevenBlack Unified Hosts" data-url="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" data-cat="ads" data-fmt="domains">+ StevenBlack Hosts</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="AdGuard DNS Filter" data-url="https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt" data-cat="ads" data-fmt="adblock">+ AdGuard Filter</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="URLHaus Malware Domains" data-url="https://urlhaus.abuse.ch/downloads/hostfile/" data-cat="malware" data-fmt="domains">+ URLHaus Malware</button>
+                </div>
+              </div>
+            </article>
+
+            <article class="card side-card">
+              <h2>Add Blocklist Feed</h2>
+              <p class="muted">Provide an HTTPS URL serving a hosts file, plain domain list, or AdBlock filter syntax.</p>
+              <form id="feed-form" class="stack">
+                <label class="field">
+                  <span>Feed Name</span>
+                  <input id="feed-name" placeholder="e.g. OISD Blocklist" required>
+                </label>
+                <label class="field">
+                  <span>HTTPS Feed URL</span>
+                  <input id="feed-url" type="url" placeholder="https://example.com/hosts.txt" required>
+                </label>
+                <label class="field">
+                  <span>Protection Category</span>
+                  <select id="feed-category">
+                    <option value="ads">Ads</option>
+                    <option value="tracking">Trackers</option>
+                    <option value="malware">Malware</option>
+                    <option value="adult">Adult Content</option>
+                    <option value="social">Social Media</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Syntax Format</span>
+                  <select id="feed-format">
+                    <option value="auto">Auto-Detect</option>
+                    <option value="domains">Domains / Hosts</option>
+                    <option value="adblock">AdBlock (||domain^)</option>
+                  </select>
+                </label>
+                <button class="button primary wide" type="submit">Add Blocklist</button>
+              </form>
+            </article>
+          </div>
+        </div>
+
+        <!-- TAB 2: CUSTOM RULES & QUICK PRESETS -->
+        <div id="blocking-rules" class="block-tab">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>One-Click Service &amp; Threat Presets</h2>
+                <p>Instantly block or unblock major social platforms, video streams, gaming networks, and telemetry.</p>
+              </div>
+            </div>
+            <div id="presets-grid" class="presets-grid"></div>
+          </article>
+
+          <div class="content-grid blocking-layout">
+            <article class="card">
+              <div class="card-header">
+                <div>
+                  <h2>Custom Policy Rules</h2>
+                  <p>Manual allow, block, and IP rewrite rules always take precedence over subscription feeds.</p>
+                </div>
+                <div class="toolbar">
+                  <input id="rule-search" class="compact-input" placeholder="Search rules...">
+                  <button id="bulk-rules-btn" class="button secondary" type="button">Bulk Import / Export</button>
+                  <button id="clear-expired-btn" class="button secondary" type="button">Prune Expired</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Domain Pattern</th>
+                      <th>Match Scope</th>
+                      <th>Action</th>
+                      <th>Client Profile</th>
+                      <th class="col-action">Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rule-body"></tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card side-card">
+              <h2>Create Custom Rule</h2>
+              <p class="muted">Override blocklists or synthesize local DNS responses.</p>
+              <form id="rule-form" class="stack">
+                <label class="field">
+                  <span>Domain Hostname</span>
+                  <input id="rule-pattern" placeholder="ads.example.com" required>
+                </label>
+                <label class="field">
+                  <span>Rule Action</span>
+                  <select id="rule-action">
+                    <option value="deny">Block (Deny)</option>
+                    <option value="allow">Allow (Whitelist)</option>
+                    <option value="rewrite">Rewrite to IP Address</option>
+                  </select>
+                </label>
+                <label class="check-row">
+                  <input id="rule-subdomains" type="checkbox" checked>
+                  <span>
+                    <strong>Match domain &amp; all subdomains</strong>
+                    <small>Applies suffix matching (e.g., *.example.com).</small>
+                  </span>
+                </label>
+                <label id="rule-value-wrap" class="field hidden">
+                  <span>Target IPv4 or IPv6 Address</span>
+                  <input id="rule-value" placeholder="192.168.1.50">
+                </label>
+                <label class="field">
+                  <span>Target Client Profile</span>
+                  <select id="rule-profile"></select>
+                </label>
+                <button class="button primary wide" type="submit">Save Custom Rule</button>
+              </form>
+            </article>
+          </div>
+        </div>
+
+        <!-- TAB 3: CLIENT DEVICES & CIDR PROFILES -->
+        <div id="blocking-devices" class="block-tab">
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>Discovered Client Devices</h2>
+                <p>Assign friendly labels, hardware icons, and policy profiles to client IP addresses.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Client IP</th>
+                    <th>Friendly Name</th>
+                    <th>Device Type</th>
+                    <th>Assigned Profile</th>
+                    <th>Queries</th>
+                    <th>Last Seen</th>
+                    <th class="col-action">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="devices-body"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <div>
+                <h2>CIDR Client Policy Profiles</h2>
+                <p>Bind subnets to custom rate limits, logging policies, and category sets (longest CIDR prefix wins).</p>
+              </div>
+              <div class="button-row">
+                <button id="add-profile-btn" type="button" class="button secondary">+ Add Profile</button>
+                <button id="save-profiles-btn" type="button" class="button primary">Save Profiles</button>
+              </div>
+            </div>
+            <div id="profiles-editor" class="editor-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ==================== 4. DNS SETTINGS PAGE ==================== -->
+      <section class="page" id="page-dns">
+        <div class="section-action-bar">
+          <div>
+            <h2>Encrypted Upstreams &amp; Unbound Engine</h2>
+            <p>Configure certificate-verified DNS-over-TLS forwarders, split-horizon LAN records, and DNSSEC validation.</p>
+          </div>
+          <button id="save-dns" type="button" class="button primary">Apply DNS Settings</button>
+        </div>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Upstream DNS-over-TLS Servers</h2>
+              <p>Unbound forwards allowed queries over TLS (Port 853) with strict SNI certificate verification.</p>
+            </div>
+            <button id="add-upstream" type="button" class="button secondary">+ Add Upstream</button>
+          </div>
+          <div id="upstream-editor" class="editor-list"></div>
+          <div class="curated-feeds-box">
+            <span class="curated-label">Quick-Add Public DoT Upstreams:</span>
+            <div class="button-row">
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="cloudflare_v4" data-name="Cloudflare" data-addr="1.1.1.1" data-sni="cloudflare-dns.com">+ Cloudflare (1.1.1.1)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="quad9_v4" data-name="Quad9" data-addr="9.9.9.9" data-sni="dns.quad9.net">+ Quad9 (9.9.9.9)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="google_v4" data-name="Google DNS" data-addr="8.8.8.8" data-sni="dns.google">+ Google (8.8.8.8)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="adguard_v4" data-name="AdGuard DNS" data-addr="94.140.14.14" data-sni="dns.adguard-dns.com">+ AdGuard (94.140.14.14)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="mullvad_v4" data-name="Mullvad DNS" data-addr="194.242.2.2" data-sni="dns.mullvad.net">+ Mullvad (194.242.2.2)</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Live DoT Upstream Latency Benchmark</h2>
+              <p>Concurrently test TLS handshake + query round-trip speed and DNSSEC validation across public and configured resolvers.</p>
+            </div>
+            <button id="run-benchmark-btn" type="button" class="button secondary">Run Live Benchmark</button>
+          </div>
+          <div id="benchmark-results" class="benchmark-container">
+            <div class="empty-state">Click "Run Live Benchmark" to measure real-time DoT latency and DNSSEC status.</div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Local DNS Records (Split-Horizon LAN)</h2>
+              <p>Serve custom A, AAAA, CNAME, and TXT records directly from Unbound with automatic reverse PTR synthesis.</p>
+            </div>
+            <button id="add-local-record-btn" type="button" class="button secondary">+ Add Local Record</button>
+          </div>
+          <div id="local-records-editor" class="editor-list"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Resolver Security &amp; Caching Options</h2>
+              <p>Tune Unbound cryptographic verification, SafeSearch VIP enforcement, and synth responses.</p>
+            </div>
+          </div>
+          <div class="settings-list">
+            <label class="setting-row">
+              <span>
+                <strong>DNSSEC Cryptographic Validation</strong>
+                <small>Verify RRSIG signatures against the root trust anchor to prevent DNS spoofing.</small>
+              </span>
+              <input id="dnssec-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>Prefetch Expiring Records</strong>
+                <small>Automatically refresh popular cached domains before TTL expiration to keep latency near 0 ms.</small>
+              </span>
+              <input id="prefetch-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>Serve Expired Cache on Upstream Outage</strong>
+                <small>Temporarily answer from stale cache if all upstream resolvers become unreachable.</small>
+              </span>
+              <input id="stale-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>Enforce Strict SafeSearch</strong>
+                <small>Rewrite Google, YouTube, Bing, DuckDuckGo, and Yandex to their family-safe VIP addresses.</small>
+              </span>
+              <input id="safesearch-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>DNS Rebinding Protection</strong>
+                <small>Strip RFC 1918 / loopback private IP answers returned by public upstream servers.</small>
+              </span>
+              <input id="rebind-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>Blocked Query Response Mode</strong>
+                <small>Choose how Lattice answers blocked domains (NXDOMAIN is recommended for Android Private DNS).</small>
+              </span>
+              <select id="block-response" class="compact-select">
+                <option value="nxdomain">NXDOMAIN (Standard Name Error)</option>
+                <option value="zero">Zero IP (0.0.0.0 / ::)</option>
+                <option value="refused">REFUSED (Policy Refusal)</option>
+              </select>
+            </label>
+            <div class="setting-row">
+              <span>
+                <strong>Unbound Resolver Cache</strong>
+                <small>Purge all cached RRsets and message records immediately.</small>
+              </span>
+              <button id="flush-cache-btn" type="button" class="button secondary">Flush Resolver Cache</button>
+            </div>
+          </div>
+        </article>
+
+        <details class="card advanced-card">
+          <summary>
+            <span>
+              <strong>Advanced Suffix Routing (Split-DNS Forward Zones)</strong>
+              <small>Route specific domain suffixes (e.g., corp.internal) to designated upstream DoT resolvers.</small>
+            </span>
+            <span class="chevron">›</span>
+          </summary>
+          <div class="details-body">
+            <div class="card-header">
+              <div>
+                <h2>Domain Suffix Routes</h2>
+                <p>Queries matching a suffix will only be forwarded to the selected enabled upstreams.</p>
+              </div>
+              <button id="add-route" type="button" class="button secondary">+ Add Suffix Route</button>
+            </div>
+            <div id="route-editor" class="editor-list"></div>
+          </div>
+        </details>
+      </section>
+
+      <!-- ==================== 5. PRIVATE DNS PAGE ==================== -->
+      <section class="page" id="page-private">
+        <div class="section-action-bar">
+          <div>
+            <h2>Private DNS, TLS &amp; Edge Tunnel</h2>
+            <p>Manage your public DoT/DoH hostname, automated Cloudflare Let's Encrypt certificates, and FRP TCP 853 bridge.</p>
+          </div>
+          <button id="save-private" type="button" class="button primary">Save Private DNS Config</button>
+        </div>
+
+        <article class="card accent-card">
+          <div class="card-header">
+            <div>
+              <h2>Client Device Connection Guide</h2>
+              <p>Connect Android, iOS/macOS, browsers, or Linux clients to your encrypted Lattice endpoint.</p>
+            </div>
+            <div class="button-row">
+              <button id="copy-hostname-btn" type="button" class="button secondary">Copy DoT Hostname</button>
+              <button id="copy-doh-btn" type="button" class="button secondary">Copy DoH Endpoint</button>
+              <a id="download-mobileconfig-btn" href="/api/apple/mobileconfig" class="button primary" download="lattice-dns.mobileconfig">Download Apple Profile (.mobileconfig)</a>
+            </div>
+          </div>
+          <div class="setup-instruction-box">
+            <div class="platform-tabs">
+              <button type="button" class="platform-tab-btn active" data-platform="android">Android (Private DNS)</button>
+              <button type="button" class="platform-tab-btn" data-platform="apple">Apple iOS &amp; macOS</button>
+              <button type="button" class="platform-tab-btn" data-platform="browser">Web Browsers (DoH)</button>
+              <button type="button" class="platform-tab-btn" data-platform="curl">CLI / RFC 8484</button>
+            </div>
+            <div id="platform-instructions-android" class="instruction-steps">
+              <span>1. Open <strong>Settings</strong> → <strong>Network &amp; Internet</strong> → <strong>Private DNS</strong>.</span>
+              <span>2. Choose <strong>Private DNS provider hostname</strong>.</span>
+              <span>3. Enter hostname: <code id="instruction-hostname" class="code-pill">Not configured</code></span>
+            </div>
+            <div id="platform-instructions-apple" class="instruction-steps hidden">
+              <span>1. Click <strong>Download Apple Profile (.mobileconfig)</strong> above.</span>
+              <span>2. On iOS/iPadOS: Open <strong>Settings</strong> → <strong>Profile Downloaded</strong> → <strong>Install</strong>.</span>
+              <span>3. On macOS: Open <strong>System Settings</strong> → <strong>General</strong> → <strong>Device Management</strong> → <strong>Install</strong>.</span>
+            </div>
+            <div id="platform-instructions-browser" class="instruction-steps hidden">
+              <span>1. In Chrome, Brave, Edge, or Firefox, open <strong>Privacy &amp; Security</strong> → <strong>Use Secure DNS</strong>.</span>
+              <span>2. Select <strong>Custom Provider</strong> and enter: <code id="instruction-doh" class="code-pill">https://.../dns-query</code></span>
+            </div>
+            <div id="platform-instructions-curl" class="instruction-steps hidden">
+              <span>Test JSON DoH resolution from any terminal:</span>
+              <code class="code-pill">curl -s "http://127.0.0.1:8080/dns-query?name=example.com&amp;type=A"</code>
+            </div>
+          </div>
+        </article>
+
+        <div class="content-grid private-layout">
+          <article class="card">
+            <div class="step-header">
+              <span class="section-number">1</span>
+              <div class="section-copy">
+                <h2>Endpoint Hostname &amp; Public Target</h2>
+                <p>The FQDN entered into Android Private DNS and the public IP/hostname where Cloudflare routes traffic.</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label class="field span-2">
+                <span>Private DNS Hostname (FQDN)</span>
+                <input id="private-hostname" placeholder="dns.example.com">
+                <small>Must match your TLS certificate Subject Alternative Name (SAN).</small>
+              </label>
+              <label class="field">
+                <span>ACME Contact Email</span>
+                <input id="private-email" type="email" placeholder="admin@example.com">
+              </label>
+              <label class="field">
+                <span>Public Target IP or FRP Host</span>
+                <input id="private-target" placeholder="203.0.113.10 or frp.example.com">
+                <small>Used when syncing your Cloudflare A/AAAA/CNAME record.</small>
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="step-header">
+              <span class="section-number">2</span>
+              <div class="section-copy">
+                <h2>Cloudflare &amp; TLS Certificate Vault</h2>
+                <p>Automate DNS-01 Let's Encrypt issuance and Cloudflare DNS record synchronization.</p>
+              </div>
+            </div>
+            <label class="field">
+              <span>Cloudflare API Token (Zone:Read, DNS:Edit)</span>
+              <input id="cloudflare-token" type="text" class="secret-input" autocomplete="off" placeholder="Leave blank to keep existing encrypted token">
+              <small id="cloudflare-token-state">No token saved.</small>
+            </label>
+            <div class="button-row">
+              <button id="sync-cloudflare" type="button" class="button secondary">Sync Cloudflare Record</button>
+              <button id="issue-cert" type="button" class="button primary">Issue or Renew Certificate</button>
+              <button id="generate-self-signed" type="button" class="button secondary" title="Generate a SAN-matched X.509 certificate for instant DoT testing">Generate Self-Signed Cert</button>
+            </div>
+            <div id="certificate-card" class="info-box"></div>
+
+            <details class="log-details">
+              <summary>Upload Custom PEM Certificate &amp; Private Key</summary>
+              <form id="upload-cert-form" class="stack upload-cert-box">
+                <label class="field">
+                  <span>Fullchain Certificate PEM</span>
+                  <textarea id="upload-cert-pem" class="compact-textarea" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                </label>
+                <label class="field">
+                  <span>Private Key PEM</span>
+                  <textarea id="upload-key-pem" class="compact-textarea" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                </label>
+                <button type="submit" class="button secondary">Validate &amp; Activate PEM</button>
+              </form>
+            </details>
+          </article>
+
+
+          <article class="card span-2" id="android-doctor-card">
+            <div class="card-header">
+              <div>
+                <div class="topbar-title-row">
+                  <h2>Android Private DNS Readiness Doctor (RFC 7858 / DnsTlsTransport)</h2>
+                  <span id="android-doctor-badge" class="badge info">Checking...</span>
+                </div>
+                <p>Live verification of TLS 1.3 ALPN "dot", EDNS0 OPT compliance, RFC 2308 negative-caching SOA, SafeSearch isolation, and pipelined DoT multiplexing.</p>
+              </div>
+              <button id="run-android-doctor" type="button" class="button secondary">Run Live Android Verify</button>
+            </div>
+            <div id="android-doctor-grid" class="doctor-grid">
+              <div class="empty-state">Running Android Private DNS readiness checks...</div>
+            </div>
+          </article>
+
+          <article class="card span-2">
+            <div class="step-header">
+              <span class="section-number">3</span>
+              <div class="section-copy">
+                <h2>FRP Edge Tunnel (Public TCP 853 Proxy)</h2>
+                <p>Expose TCP port 853 through a remote FRPS instance with PROXY protocol v1 client IP preservation.</p>
+              </div>
+            </div>
+            <label class="setting-row compact">
+              <span>
+                <strong>Enable FRP Client Supervisor (frpc)</strong>
+                <small>Forwards public port 853 on your FRP server to Lattice's internal PROXY v1 bridge (port 8854).</small>
+              </span>
+              <input id="frp-enabled" type="checkbox" class="switch-input">
+            </label>
+            <div id="frp-fields" class="form-grid hidden">
+              <label class="field">
+                <span>FRP Server Address</span>
+                <input id="frp-server" placeholder="frp.example.com">
+              </label>
+              <label class="field">
+                <span>Control Port</span>
+                <input id="frp-port" type="number" min="1" max="65535" placeholder="7000">
+              </label>
+              <label class="field">
+                <span>Authentication Method</span>
+                <select id="frp-auth">
+                  <option value="none">No Authentication</option>
+                  <option value="token">Token Authentication</option>
+                </select>
+              </label>
+              <label id="frp-token-wrap" class="field hidden">
+                <span>FRP Shared Secret Token</span>
+                <input id="frp-token" type="text" class="secret-input" autocomplete="off" placeholder="Leave blank to keep saved token">
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="restart-frp" type="button" class="button secondary">Restart FRP Tunnel</button>
+            </div>
+            <div id="frp-card" class="info-box"></div>
+            <details class="log-details">
+              <summary>Inspect FRP Supervisor Logs</summary>
+              <pre id="frp-log" class="log-view">No tunnel activity yet.</pre>
+            </details>
+          </article>
+        </div>
+      </section>
+
+      <!-- ==================== 6. SYSTEM PAGE ==================== -->
+      <section class="page" id="page-system">
+        <div class="section-action-bar">
+          <div>
+            <h2>System, Diagnostics &amp; Recovery</h2>
+            <p>Manage telemetry privacy, cache memory limits, domain resolution tracing, backups, and audit logs.</p>
+          </div>
+          <button id="save-system" type="button" class="button primary">Save System Settings</button>
+        </div>
+
+        <div class="content-grid two">
+          <article class="card">
+            <h2>Telemetry Privacy &amp; Retention</h2>
+            <p class="muted">Control how client IP addresses and DNS query logs are stored on disk.</p>
+            <div class="stack">
+              <label class="field">
+                <span>Privacy Logging Mode</span>
+                <select id="privacy-mode">
+                  <option value="full">Full — Store client IP and queried domain</option>
+                  <option value="balanced">Balanced — Anonymize client IP (SHA-256 hash)</option>
+                  <option value="minimal">Minimal — Disable per-query database logging</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Query Journal Retention Window</span>
+                <div class="input-suffix">
+                  <input id="retention-days" type="number" min="1" max="90" placeholder="7">
+                  <span>days</span>
+                </div>
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Unbound Memory Cache</h2>
+            <p class="muted">Allocate RAM for RRset and DNS message caches inside Unbound.</p>
+            <div class="form-grid">
+              <label class="field">
+                <span>RRset Cache Size</span>
+                <div class="input-suffix">
+                  <input id="rrset-cache" type="number" min="16" max="2048">
+                  <span>MB</span>
+                </div>
+              </label>
+              <label class="field">
+                <span>Message Cache Size</span>
+                <div class="input-suffix">
+                  <input id="message-cache" type="number" min="8" max="1024">
+                  <span>MB</span>
+                </div>
+              </label>
+            </div>
+            <button id="flush-cache" type="button" class="button danger wide">Purge All Unbound Caches</button>
+          </article>
+        </div>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Policy &amp; Resolution Diagnostic Simulator</h2>
+              <p>Trace how Lattice evaluates a domain for a simulated client IP and inspect the live Unbound response.</p>
+            </div>
+          </div>
+          <form id="diagnostic-form" class="diagnostic-form">
+            <input id="diag-name" placeholder="Enter hostname to test (e.g. example.com)" required>
+            <select id="diag-type">
+              <option value="1">A</option>
+              <option value="28">AAAA</option>
+              <option value="5">CNAME</option>
+              <option value="15">MX</option>
+              <option value="16">TXT</option>
+              <option value="65">HTTPS</option>
+            </select>
+            <input id="diag-client" class="compact-input" placeholder="Client IP (127.0.0.1)" value="127.0.0.1">
+            <button class="button primary" type="submit">Run Trace</button>
+          </form>
+          <div id="diagnostic-friendly" class="diagnostic-result hidden"></div>
+          <details id="diagnostic-raw-wrap" class="advanced-inline hidden">
+            <summary>Show Raw Diagnostic JSON</summary>
+            <pre id="diagnostic-result" class="log-view"></pre>
+          </details>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Snapshot Backup &amp; Restore</h2>
+              <p>Export a portable JSON snapshot of your validated configuration, custom rules, and subscription feeds.</p>
+            </div>
+          </div>
+          <div class="backup-actions">
+            <div class="backup-col">
+              <strong>Export Control Plane Snapshot</strong>
+              <p class="muted">Download all settings, profiles, custom rules, and feed definitions as a JSON archive.</p>
+              <button id="download-backup" type="button" class="button secondary">Download Backup JSON</button>
+            </div>
+            <div class="backup-col">
+              <strong>Restore Snapshot from File</strong>
+              <p class="muted">Upload a previously exported Lattice JSON snapshot to restore configuration and rules.</p>
+              <div class="restore-row">
+                <input id="restore-file" type="file" accept=".json" class="compact-input">
+                <button id="restore-backup-btn" type="button" class="button primary">Restore Snapshot</button>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Security &amp; Administrative Audit Log</h2>
+              <p>Tamper-evident chronological journal of configuration commits, logins, certificate updates, and rule changes.</p>
+            </div>
+            <button id="refresh-audit" type="button" class="button secondary">Refresh Audit Log</button>
+          </div>
+          <div class="table-wrap audit-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-time">Timestamp</th>
+                  <th class="col-verdict">Event</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="audit-body">
+                <tr><td colspan="3" class="empty-state">Loading audit trail...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <details class="card advanced-card">
+          <summary>
+            <span>
+              <strong>Advanced Configuration Document (Raw JSON)</strong>
+              <small>Inspect or edit the complete validated configuration payload with automatic transactional rollback.</small>
+            </span>
+            <span class="chevron">›</span>
+          </summary>
+          <div class="details-body">
+            <div class="warning-box">Edits here are schema-validated and tested with unbound-checkconf before activation. If the resolver fails to start, Lattice automatically rolls back to the previous revision.</div>
+            <label class="field">
+              <span>Configuration JSON</span>
+              <textarea id="config-editor" spellcheck="false" rows="14"></textarea>
+            </label>
+            <button id="save-advanced" type="button" class="button primary">Validate &amp; Apply JSON</button>
+          </div>
+        </details>
+
+        <article class="card account-card">
+          <div>
+            <h2>Administrator Session</h2>
+            <p class="muted">Lattice DNS <span id="system-version">1.0.0-gemini</span> • Memory-resident CSRF-protected session</p>
+          </div>
+          <button id="logout" type="button" class="button secondary">Sign Out</button>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <!-- BULK RULES MODAL -->
+  <div id="bulk-rules-scrim" class="drawer-scrim hidden"></div>
+  <div id="bulk-rules-modal" class="modal-card hidden">
+    <div class="card-header">
+      <div>
+        <h2>Bulk Import &amp; Export Rules</h2>
+        <p>Paste rules in AdBlock syntax (<code>||domain.com^</code>), hosts syntax (<code>0.0.0.0 domain.com</code>), or one domain per line.</p>
+      </div>
+      <button id="bulk-modal-close" type="button" class="icon-button" aria-label="Close modal">×</button>
+    </div>
+    <div class="stack">
+      <label class="field">
+        <span>Domain Patterns</span>
+        <textarea id="bulk-rules-input" class="compact-textarea" rows="7" placeholder="||doubleclick.net^&#10;0.0.0.0 telemetry.example.com&#10;ads.example.org"></textarea>
+      </label>
+      <div class="form-grid three-col">
+        <label class="field">
+          <span>Action</span>
+          <select id="bulk-rules-action">
+            <option value="deny">Block (Deny)</option>
+            <option value="allow">Allow (Whitelist)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Default Match Scope</span>
+          <select id="bulk-rules-kind">
+            <option value="suffix">Domain &amp; Subdomains</option>
+            <option value="exact">Exact Hostname Only</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Client Profile</span>
+          <select id="bulk-rules-profile"></select>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button id="bulk-export-btn" class="button secondary" type="button">Export Current Rules (.txt)</button>
+        <button id="bulk-import-submit" class="button primary" type="button">Import Rules</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

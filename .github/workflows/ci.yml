@@ -1,0 +1,131 @@
+name: Verify and publish Lattice DNS
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lattice-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: lattice:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify mounted volume bootstrap and privilege drop
+        run: |
+          mkdir -p /tmp/lattice-volume
+          sudo chown root:root /tmp/lattice-volume
+          sudo chmod 700 /tmp/lattice-volume
+          docker run --rm -v /tmp/lattice-volume:/data lattice:test \
+            python3 -c "import os; from pathlib import Path; assert os.geteuid()==10001; Path('/data/write-test').write_text('ok')"
+
+      - name: Unit tests in production runtime
+        run: docker run --rm -v "$PWD/tests:/app/tests:ro" lattice:test python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: JavaScript syntax
+        run: node --check lattice/static/app.js
+
+      - name: Start FRPS and Lattice
+        run: |
+          docker network create lattice-ci
+          docker run -d --name lattice-frps --network lattice-ci \
+            -p 127.0.0.1:1853:853 \
+            -v "$PWD/tests/frps.toml:/etc/frp/frps.toml:ro" \
+            --entrypoint /usr/bin/frps ghcr.io/fatedier/frps:v0.61.1 -c /etc/frp/frps.toml
+          docker run -d --name lattice-smoke --network lattice-ci \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --tmpfs /data:rw,noexec,nosuid,size=256m \
+            --cap-drop ALL \
+            --cap-add CHOWN \
+            --cap-add DAC_OVERRIDE \
+            --cap-add SETUID \
+            --cap-add SETGID \
+            --security-opt no-new-privileges:true \
+            -p 127.0.0.1:18080:8080 \
+            -p 127.0.0.1:18853:8853 \
+            lattice:test
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:18080/healthz && break
+            sleep 1
+          done
+          docker logs lattice-smoke 2>&1 | sed -n 's/^Lattice first-time setup code: //p' | tail -n 1 > /tmp/lattice-setup-code
+          test -s /tmp/lattice-setup-code
+
+      - name: End to end DoT and FRP smoke
+        env:
+          LATTICE_URL: http://127.0.0.1:18080
+        run: |
+          export LATTICE_SETUP_CODE="$(cat /tmp/lattice-setup-code)"
+          python3 tests/container_smoke.py
+
+      - name: Install browser test tools
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Beginner dashboard browser smoke
+        env:
+          LATTICE_URL: http://127.0.0.1:18080
+          LATTICE_PASSWORD: integration-password-2468
+        run: node tests/ui_smoke.cjs
+
+      - name: Upload dashboard screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lattice-dashboard-screenshots
+          path: artifacts/
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push verified image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/ntun7719/lattice-dns:latest
+            ghcr.io/ntun7719/lattice-dns:sha-${{ github.sha }}
+          cache-from: type=gha
+          provenance: true
+          sbom: true
+
+      - name: Logs and cleanup
+        if: always()
+        run: |
+          docker logs lattice-smoke 2>&1 || true
+          docker logs lattice-frps 2>&1 || true
+          docker rm -f lattice-smoke lattice-frps || true
+          docker network rm lattice-ci || true
