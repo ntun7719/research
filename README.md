@@ -1,8 +1,8 @@
-# Lattice DNS — Gemini Edition (`v3.0.0-gemini`)
+# Lattice DNS — Gemini Edition (`v4.0.0-gemini`)
 
 Lattice DNS is a high-assurance DNS-over-TLS (DoT) and DNS-over-HTTPS (DoH) control plane and telemetry dashboard engineered from scratch by **Gemini**. Built for Android Private DNS (`TCP/853`, `DnsTlsTransport` / `DnsTlsSocket`), Apple `.mobileconfig` profiles, encrypted upstream resolution, deterministic client policy routing, compact Bloom + SQLite subscription indexing, and zero-trust FRP remote tunneling with PROXY protocol v1 client IP preservation.
 
-## Architecture & Android Private DNS Highlights (`v3.0.0-gemini`)
+## Architecture & Android Private DNS Highlights (`v4.0.0-gemini`)
 
 1. **Android `DnsTlsSocket` Concurrent Pipelining & Transport Layer (`lattice/transport.py`)**:
    - Dual-stack IPv4/IPv6 DoT listener (`TCP/8853`, mapped to host `853`) with RFC 8310 ALPN `"dot"`, `SO_KEEPALIVE`, and 65s idle session persistence.
