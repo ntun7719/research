@@ -1,4 +1,4 @@
-"""Persistent state, encrypted secrets, non-blocking query telemetry queue, and authentication."""
+"""Persistent state, encrypted secrets, non-blocking query telemetry queue, 12 service presets, and authentication."""
 from __future__ import annotations
 
 import base64
@@ -10,6 +10,7 @@ import io
 import json
 import math
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -34,44 +35,102 @@ PRESETS: dict[str, dict[str, Any]] = {
     "tiktok": {
         "name": "TikTok & ByteDance",
         "description": "Short-form video app, CDN nodes, and telemetry endpoints",
-        "domains": ["tiktok.com", "tiktokcdn.com", "byteoversea.com", "ibytedtos.com", "musical.ly"],
+        "domains": ["tiktok.com", "tiktokcdn.com", "byteoversea.com", "ibytedtos.com", "musical.ly", "tiktokv.com"],
     },
     "meta": {
         "name": "Meta Social Suite",
-        "description": "Facebook, Instagram, WhatsApp, and Meta graph beacons",
-        "domains": ["facebook.com", "fbcdn.net", "instagram.com", "whatsapp.com", "meta.com"],
+        "description": "Facebook, Instagram, Threads, WhatsApp, and Meta graph beacons",
+        "domains": ["facebook.com", "fbcdn.net", "instagram.com", "cdninstagram.com", "threads.net", "whatsapp.com", "meta.com"],
     },
     "youtube": {
         "name": "YouTube & Video Delivery",
-        "description": "YouTube web, mobile APIs, and Google video streaming CDNs",
-        "domains": ["youtube.com", "googlevideo.com", "ytimg.com", "youtu.be", "youtubei.googleapis.com"],
+        "description": "YouTube web, mobile APIs, Shorts, and Google video streaming CDNs",
+        "domains": ["youtube.com", "googlevideo.com", "ytimg.com", "youtu.be", "youtubei.googleapis.com", "youtube-nocookie.com"],
     },
     "discord": {
         "name": "Discord Voice & Chat",
-        "description": "Discord messaging client, media attachments, and gateway servers",
-        "domains": ["discord.com", "discordapp.com", "discordapp.net", "discord.gg", "discord.media"],
+        "description": "Discord messaging client, media attachments, and voice gateway servers",
+        "domains": ["discord.com", "discordapp.com", "discordapp.net", "discord.gg", "discord.media", "discordcdn.com"],
+    },
+    "twitter": {
+        "name": "X (Twitter) & Media",
+        "description": "X/Twitter timeline, API endpoints, t.co shortlinks, and video/image CDNs",
+        "domains": ["twitter.com", "x.com", "twimg.com", "t.co", "vine.co", "periscope.tv"],
+    },
+    "snapchat": {
+        "name": "Snapchat & Bitmoji",
+        "description": "Snapchat messaging, Spotlight media delivery, and Bitmoji avatars",
+        "domains": ["snapchat.com", "sc-cdn.net", "snap-dev.net", "bitmoji.com", "snapads.com"],
+    },
+    "netflix": {
+        "name": "Netflix Streaming",
+        "description": "Netflix video streaming, OpenConnect CDNs, and Fast.com probes",
+        "domains": ["netflix.com", "nflxvideo.net", "nflximg.net", "nflxso.net", "nflxext.com", "fast.com"],
+    },
+    "reddit": {
+        "name": "Reddit & Media",
+        "description": "Reddit forums, mobile APIs, redd.it media hosts, and analytics",
+        "domains": ["reddit.com", "redd.it", "redditmedia.com", "redditstatic.com", "redditinc.com"],
     },
     "gaming": {
         "name": "Gaming Platforms",
-        "description": "Steam, Roblox, Epic Games, and Riot storefront/matchmaking",
-        "domains": ["steampowered.com", "steamcommunity.com", "roblox.com", "epicgames.com", "riotgames.com"],
+        "description": "Steam, Roblox, Epic Games, Battle.net, and Riot storefront/matchmaking",
+        "domains": ["steampowered.com", "steamcommunity.com", "roblox.com", "rbxcdn.com", "epicgames.com", "riotgames.com", "battle.net"],
+    },
+    "ai_bots": {
+        "name": "Generative AI Portals",
+        "description": "ChatGPT, OpenAI API, Claude, Perplexity, and Character.AI web access",
+        "domains": ["chatgpt.com", "openai.com", "oaistatic.com", "claude.ai", "anthropic.com", "perplexity.ai", "character.ai"],
     },
     "cryptominers": {
         "name": "Cryptocurrency Web Miners",
-        "description": "Browser-based coin mining scripts and pool relays",
-        "domains": ["coinhive.com", "crypto-loot.com", "minergate.com", "coin-have.com", "jsecoin.com"],
+        "description": "Browser-based coin mining scripts, Stratum pools, and cryptojacking relays",
+        "domains": ["coinhive.com", "crypto-loot.com", "minergate.com", "coin-have.com", "jsecoin.com", "nanopool.org", "2miners.com"],
     },
     "telemetry": {
-        "name": "OS & Device Telemetry",
-        "description": "Windows diagnostic collection and background activity reporting",
+        "name": "OS, Mobile & Smart-TV Telemetry",
+        "description": "Windows, Samsung, Xiaomi, Roku, and LG ACR background telemetry beacons",
         "domains": [
             "v10.events.data.microsoft.com",
             "telemetry.microsoft.com",
             "settings-win.data.microsoft.com",
             "watson.telemetry.microsoft.com",
+            "samsungads.com",
+            "samsungelectronics.com",
+            "tracking.miui.com",
+            "data.mistat.xiaomi.com",
+            "scribe.logs.roku.com",
+            "lgad.cjpowercast.com",
         ],
     },
 }
+
+RECOMMENDED_FEED_BUNDLE: list[dict[str, str]] = [
+    {
+        "name": "StevenBlack Unified Hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        "category": "ads",
+        "format": "domains",
+    },
+    {
+        "name": "AdGuard SDN DNS Filter",
+        "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+        "category": "ads",
+        "format": "adblock",
+    },
+    {
+        "name": "URLHaus Abuse.ch Malware Hostfile",
+        "url": "https://urlhaus.abuse.ch/downloads/hostfile/",
+        "category": "malware",
+        "format": "domains",
+    },
+    {
+        "name": "Peter Lowe Ad & Tracker Servers",
+        "url": "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0&mimetype=plaintext",
+        "category": "tracking",
+        "format": "domains",
+    },
+]
 
 
 def atomic_write(path: Path, payload: bytes | str) -> None:
@@ -225,7 +284,6 @@ class Store:
             )
 
     def _flush_pending_queries_locked(self) -> None:
-        """Flush any buffered query telemetry rows when self.lock is already held."""
         with self.queue_lock:
             if not self._pending_queries:
                 return
@@ -371,8 +429,15 @@ class Store:
             return [dict(row) for row in self.db.execute("SELECT * FROM rules ORDER BY id DESC")]
 
     def add_rule(self, pattern: str, kind: str, action: str, value: str, profile: str, expires: float | None) -> dict[str, Any]:
-        if kind not in ("exact", "suffix") or action not in ("allow", "deny", "rewrite"):
+        if kind not in ("exact", "suffix", "regex") or action not in ("allow", "deny", "rewrite"):
             raise ValueError("Invalid rule kind or action")
+        if kind == "regex":
+            if len(pattern) > 200:
+                raise ValueError("Regex pattern is too long")
+            try:
+                re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                raise ValueError(f"Invalid regular expression: {exc}") from exc
         if expires is not None and (not isinstance(expires, (int, float)) or expires <= time.time()):
             raise ValueError("Rule expiry must be in the future")
         with self.lock, self.db:
@@ -419,7 +484,6 @@ class Store:
         now = time.time()
         entry = (now, client, domain, qtype, action, profile, round(latency, 3), rcode, detail[:500])
 
-        # Non-blocking fast path: if store.lock is held by a heavy background feed refresh, queue in memory
         if not self.lock.acquire(blocking=False):
             with self.queue_lock:
                 self._pending_queries.append(entry)
@@ -533,6 +597,21 @@ class Store:
                 """,
                 (cutoff,),
             ).fetchall()
+        raw_series = {int(x["bucket"]): {"bucket": int(x["bucket"]), "total": int(x["total"] or 0), "blocked": int(x["blocked"] or 0)} for x in series}
+        if raw_series and len(raw_series) < 12:
+            now_bucket = int(time.time() // bucket_sec) * bucket_sec
+            num_points = 12
+            filled_series = []
+            for i in range(num_points - 1, -1, -1):
+                b_ts = now_bucket - i * bucket_sec
+                filled_series.append(raw_series.get(b_ts, {"bucket": b_ts, "total": 0, "blocked": 0}))
+            for k in sorted(raw_series.keys()):
+                if all(item["bucket"] != k for item in filled_series):
+                    filled_series.append(raw_series[k])
+            filled_series.sort(key=lambda item: item["bucket"])
+        else:
+            filled_series = [raw_series[k] for k in sorted(raw_series.keys())]
+
         return {
             "total": summary["total"] or 0,
             "blocked": summary["blocked"] or 0,
@@ -546,7 +625,7 @@ class Store:
             "top_clients": [dict(x) for x in top_clients],
             "qtypes": [dict(x) for x in qtypes],
             "actions": [dict(x) for x in actions],
-            "series": [{"bucket": x["bucket"], "total": int(x["total"] or 0), "blocked": int(x["blocked"] or 0)} for x in series],
+            "series": filled_series,
         }
 
     def threat_snapshot(self) -> dict[str, Any]:
@@ -742,6 +821,25 @@ class Store:
                         self.db.execute("DELETE FROM rules WHERE pattern=? AND action='deny'", (domain,))
         self.audit("Preset updated", f"{preset['name']} ({'blocked' if enable else 'unblocked'})")
         return {"ok": True, "preset": preset_id, "enabled": enable}
+
+    def feed_rows(self) -> list[dict[str, Any]]:
+        return self.rows("SELECT * FROM feeds ORDER BY id")
+
+    def feeds(self) -> list[dict[str, Any]]:
+        return self.feed_rows()
+
+    def install_recommended_bundle(self) -> dict[str, Any]:
+        existing_urls = {r["url"] for r in self.feed_rows()}
+        added = 0
+        with self.lock, self.db:
+            for item in RECOMMENDED_FEED_BUNDLE:
+                if item["url"] not in existing_urls:
+                    self.db.execute(
+                        "INSERT INTO feeds(name,url,category,enabled,format) VALUES(?,?,?,?,1)",
+                        (item["name"], item["url"], item["category"], item["format"]),
+                    )
+                    added += 1
+        return {"ok": True, "added": added, "installed": added, "total_bundle": len(RECOMMENDED_FEED_BUNDLE), "feeds": self.feed_rows()}
 
     def close(self) -> None:
         with self.lock:

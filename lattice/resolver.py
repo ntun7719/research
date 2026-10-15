@@ -31,10 +31,10 @@ class ResolverManager:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = self.root / "unbound.conf"
         self.process: subprocess.Popen | None = None
-        self.embedded = False
+        self.embedded = True
         self.lock = threading.RLock()
         self.error = ""
-        self.started = 0.0
+        self.started = time.time()
 
     def ensure_anchor(self) -> Path | None:
         target = self.root / "root.key"

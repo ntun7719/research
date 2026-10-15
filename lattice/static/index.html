@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080c10">
-  <title>Lattice DNS — Gemini Control Plane</title>
+  <title>Lattice DNS — Gemini Ultra Control Plane</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
 </head>
@@ -23,7 +23,7 @@
         <div class="auth-brand-text">
           <div class="brand-title-row">
             <strong>Lattice DNS</strong>
-            <span class="edition-pill">Gemini Edition</span>
+            <span class="edition-pill">Gemini Ultra</span>
           </div>
           <span>Encrypted DoT &amp; DoH Control Plane</span>
         </div>
@@ -62,7 +62,7 @@
             <strong>Lattice DNS</strong>
             <span class="edition-tag">Gemini</span>
           </div>
-          <span id="rail-version">Version 1.0.0</span>
+          <span id="rail-version">Version 6.0.0</span>
         </div>
         <button id="close-nav" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button>
       </div>
@@ -108,6 +108,7 @@
       </nav>
 
       <div class="sidebar-shortcuts">
+        <div class="shortcut-line"><span>Command palette</span><kbd class="kbd-pill">⌘K</kbd></div>
         <div class="shortcut-line"><span>Search log</span><kbd class="kbd-pill">/</kbd></div>
         <div class="shortcut-line"><span>Refresh data</span><kbd class="kbd-pill">R</kbd></div>
       </div>
@@ -144,6 +145,10 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <button id="cmd-palette-btn" type="button" class="button secondary" title="Open Command Palette (⌘K / Ctrl+K)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>Command (⌘K)</span>
+          </button>
           <div class="dropdown-wrap">
             <button id="snooze-btn" type="button" class="button secondary">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
@@ -172,7 +177,10 @@
       <section class="page active" id="page-dashboard">
         <div id="setup-guide" class="setup-guide hidden">
           <div class="setup-copy">
-            <span class="setup-badge">Onboarding Checklist</span>
+            <div class="setup-guide-top">
+              <span class="setup-badge">Onboarding Checklist</span>
+              <button id="toggle-setup-guide-btn" type="button" class="text-button">Collapse</button>
+            </div>
             <h2>Complete Android Private DNS Setup</h2>
             <p>Your local Unbound validating resolver is active. Complete these 3 steps to serve DNS over TLS on port 853.</p>
           </div>
@@ -185,6 +193,7 @@
             <span class="verdict-chip"><i class="dot-sm bad"></i>Blocked: <strong id="pill-blocked">0</strong></span>
             <span class="verdict-chip"><i class="dot-sm purple"></i>Rewritten: <strong id="pill-rewritten">0</strong></span>
             <span class="verdict-chip"><i class="dot-sm warn"></i>Errors: <strong id="pill-errors">0</strong></span>
+            <span class="verdict-chip"><i class="dot-sm good"></i>L1 Wire Cache: <strong id="pill-l1-hit">0.0%</strong></span>
           </div>
           <div class="time-range-picker">
             <span class="time-range-label">Window</span>
@@ -260,9 +269,9 @@
             <div>
               <div class="title-with-pill">
                 <h2>Resolution Data Path</h2>
-                <span class="badge info">End-to-End DoT + DNSSEC</span>
+                <span class="badge info">End-to-End DoT + CNAME Guard</span>
               </div>
-              <p>Live packet pipeline from client devices through policy evaluation to recursive upstream verification.</p>
+              <p>Live packet pipeline from client devices through policy evaluation, CNAME cloaking verification, and L1 wire cache to Unbound.</p>
             </div>
             <button type="button" class="text-button jump-page" data-target="private">Configure Transport →</button>
           </div>
@@ -274,7 +283,7 @@
               <div class="topo-details">
                 <strong>Client Endpoints</strong>
                 <span id="topo-hostname-label">Android Private DNS / DoH</span>
-                <span class="node-pill">TLS 853 &amp; HTTPS</span>
+                <span class="node-pill">TLS 853 &amp; HTTPS 443</span>
               </div>
             </div>
             <div class="topo-connector">→</div>
@@ -285,7 +294,7 @@
               <div class="topo-details">
                 <strong>FRP Edge Bridge</strong>
                 <span id="topo-frp-state">Direct Listener</span>
-                <span class="node-pill">PROXY v1 IP Passthrough</span>
+                <span class="node-pill">PROXY v1/v2 Auto-Peek</span>
               </div>
             </div>
             <div class="topo-connector">→</div>
@@ -294,9 +303,9 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
               </div>
               <div class="topo-details">
-                <strong>Policy &amp; Bloom Engine</strong>
+                <strong>Policy &amp; CNAME Engine</strong>
                 <span id="topo-policy-status">0 rules • 3 categories</span>
-                <span class="node-pill">O(1) Bloom + SQLite</span>
+                <span class="node-pill">O(1) Bloom + Regex</span>
               </div>
             </div>
             <div class="topo-connector">→</div>
@@ -305,9 +314,9 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               </div>
               <div class="topo-details">
-                <strong>Unbound Recursive Core</strong>
+                <strong>L1 Cache + Unbound Core</strong>
                 <span id="topo-upstream-status">Validating Upstreams</span>
-                <span class="node-pill">RFC 7858 DoT</span>
+                <span class="node-pill">RFC 7858 DoT + RFC 8767</span>
               </div>
             </div>
           </div>
@@ -616,7 +625,10 @@
                   <h2>Subscription Blocklists</h2>
                   <p>Remote hosts and AdBlock feeds indexed into the constant-time Bloom filter and SQLite engine.</p>
                 </div>
-                <button id="refresh-feeds" type="button" class="button secondary">Update All Lists</button>
+                <div class="button-row">
+                  <button id="install-bundle-btn" type="button" class="button primary">1-Click Recommended Bundle (4 Lists)</button>
+                  <button id="refresh-feeds" type="button" class="button secondary">Update All Lists</button>
+                </div>
               </div>
               <div id="feed-list" class="list-stack"></div>
 
@@ -626,6 +638,7 @@
                   <button type="button" class="btn-chip preset-feed-btn" data-name="StevenBlack Unified Hosts" data-url="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" data-cat="ads" data-fmt="domains">+ StevenBlack Hosts</button>
                   <button type="button" class="btn-chip preset-feed-btn" data-name="AdGuard DNS Filter" data-url="https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt" data-cat="ads" data-fmt="adblock">+ AdGuard Filter</button>
                   <button type="button" class="btn-chip preset-feed-btn" data-name="URLHaus Malware Domains" data-url="https://urlhaus.abuse.ch/downloads/hostfile/" data-cat="malware" data-fmt="domains">+ URLHaus Malware</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="Peter Lowe Ad &amp; Tracker List" data-url="https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&amp;showintro=0&amp;mimetype=plaintext" data-cat="tracking" data-fmt="domains">+ Peter Lowe Trackers</button>
                 </div>
               </div>
             </article>
@@ -672,8 +685,8 @@
           <article class="card">
             <div class="card-header">
               <div>
-                <h2>One-Click Service &amp; Threat Presets</h2>
-                <p>Instantly block or unblock major social platforms, video streams, gaming networks, and telemetry.</p>
+                <h2>One-Click Service &amp; Threat Presets (12 Curated Catalogs)</h2>
+                <p>Instantly block or unblock social media, streaming services, AI crawlers, cryptominers, gaming networks, and OS telemetry.</p>
               </div>
             </div>
             <div id="presets-grid" class="presets-grid"></div>
@@ -684,7 +697,7 @@
               <div class="card-header">
                 <div>
                   <h2>Custom Policy Rules</h2>
-                  <p>Manual allow, block, and IP rewrite rules always take precedence over subscription feeds.</p>
+                  <p>Manual exact, suffix, and compiled Python regex rules always take precedence over subscription feeds.</p>
                 </div>
                 <div class="toolbar">
                   <input id="rule-search" class="compact-input" placeholder="Search rules...">
@@ -696,7 +709,7 @@
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th>Domain Pattern</th>
+                      <th>Domain / Regex Pattern</th>
                       <th>Match Scope</th>
                       <th>Action</th>
                       <th>Client Profile</th>
@@ -710,11 +723,11 @@
 
             <article class="card side-card">
               <h2>Create Custom Rule</h2>
-              <p class="muted">Override blocklists or synthesize local DNS responses.</p>
+              <p class="muted">Override blocklists, match via Regex, or synthesize local DNS responses.</p>
               <form id="rule-form" class="stack">
                 <label class="field">
-                  <span>Domain Hostname</span>
-                  <input id="rule-pattern" placeholder="ads.example.com" required>
+                  <span>Domain or Regex Pattern</span>
+                  <input id="rule-pattern" placeholder="ads.example.com or ^ad[0-9]+\." required>
                 </label>
                 <label class="field">
                   <span>Rule Action</span>
@@ -724,16 +737,34 @@
                     <option value="rewrite">Rewrite to IP Address</option>
                   </select>
                 </label>
+                <label class="field">
+                  <span>Match Mode</span>
+                  <select id="rule-kind">
+                    <option value="suffix">Suffix (Domain &amp; All Subdomains)</option>
+                    <option value="exact">Exact Hostname Only</option>
+                    <option value="regex">Regular Expression (Python re)</option>
+                  </select>
+                </label>
                 <label class="check-row">
                   <input id="rule-subdomains" type="checkbox" checked>
                   <span>
                     <strong>Match domain &amp; all subdomains</strong>
-                    <small>Applies suffix matching (e.g., *.example.com).</small>
+                    <small>Applies suffix matching (e.g., *.example.com) unless Regex is selected.</small>
                   </span>
                 </label>
                 <label id="rule-value-wrap" class="field hidden">
                   <span>Target IPv4 or IPv6 Address</span>
                   <input id="rule-value" placeholder="192.168.1.50">
+                </label>
+                <label class="field">
+                  <span>Rule Expiration (TTL)</span>
+                  <select id="rule-ttl">
+                    <option value="0">Permanent (Never Expires)</option>
+                    <option value="900">Temporary — 15 Minutes</option>
+                    <option value="3600">Temporary — 1 Hour</option>
+                    <option value="86400">Temporary — 24 Hours</option>
+                    <option value="604800">Temporary — 7 Days</option>
+                  </select>
                 </label>
                 <label class="field">
                   <span>Target Client Profile</span>
@@ -793,10 +824,68 @@
         <div class="section-action-bar">
           <div>
             <h2>Encrypted Upstreams &amp; Unbound Engine</h2>
-            <p>Configure certificate-verified DNS-over-TLS forwarders, split-horizon LAN records, and DNSSEC validation.</p>
+            <p>Configure certificate-verified DNS-over-TLS forwarders, L1 wire caching, split-horizon LAN records, and DNSSEC validation.</p>
           </div>
           <button id="save-dns" type="button" class="button primary">Apply DNS Settings</button>
         </div>
+
+        <article class="card accent-card" id="l1-cache-card">
+          <div class="card-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>L1 Wire-Speed DNS Cache &amp; CNAME Unmasking Guard</h2>
+                <span class="badge allowed">RFC 8767 Serve-Expired + CNAME Cloaking Protection</span>
+              </div>
+              <p>Sub-millisecond in-memory wire cache with dynamic TTL decrementing, stale-while-revalidate fallback, and deep inspection of CNAME chains against active blocklists.</p>
+            </div>
+            <button id="flush-l1-btn" type="button" class="button secondary">Flush L1 &amp; Unbound Cache</button>
+          </div>
+          <div class="mini-stats" id="l1-cache-stats-grid">
+            <div class="mini-stat-box">
+              <span class="mini-label">L1 Cache Hit Ratio</span>
+              <strong id="l1-hit-rate" class="mini-val">0.0%</strong>
+              <small id="l1-hit-detail">0 hits / 0 misses</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Active Wire Entries</span>
+              <strong id="l1-active-entries" class="mini-val">0</strong>
+              <small id="l1-capacity-detail">Max 4,096 RRsets</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Stale Fallback Hits</span>
+              <strong id="l1-stale-hits" class="mini-val">0</strong>
+              <small>RFC 8767 resiliency</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">CNAME Unmasking</span>
+              <strong class="mini-val text-green">Active</strong>
+              <small>Inspects all CNAME hops</small>
+            </div>
+          </div>
+          <div class="l1-entries-box">
+            <div class="l1-entries-head">
+              <strong>Hot Cached Wire RRsets (Live L1 Inspector)</strong>
+              <span class="muted">Real-time decremented TTLs &amp; hit counters</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th class="col-type">Type</th>
+                    <th>Cached Answer Summary</th>
+                    <th class="col-latency">TTL Left</th>
+                    <th class="col-type">Hits</th>
+                    <th class="col-action">Evict</th>
+                  </tr>
+                </thead>
+                <tbody id="l1-entries-body">
+                  <tr><td colspan="6" class="empty-state">No cached RRsets in L1 memory yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </article>
 
         <article class="card">
           <div class="card-header">
@@ -836,7 +925,7 @@
           <div class="card-header">
             <div>
               <h2>Local DNS Records (Split-Horizon LAN)</h2>
-              <p>Serve custom A, AAAA, CNAME, and TXT records directly from Unbound with automatic reverse PTR synthesis.</p>
+              <p>Serve custom A, AAAA, CNAME, and TXT records directly from Unbound and the DoT gateway with automatic reverse PTR synthesis.</p>
             </div>
             <button id="add-local-record-btn" type="button" class="button secondary">+ Add Local Record</button>
           </div>
@@ -942,38 +1031,58 @@
           <div class="card-header">
             <div>
               <h2>Client Device Connection Guide</h2>
-              <p>Connect Android, iOS/macOS, browsers, or Linux clients to your encrypted Lattice endpoint.</p>
+              <p>Connect Android, iOS/macOS, Railway Cloud DoH, or browsers to your encrypted Lattice endpoint.</p>
             </div>
             <div class="button-row">
               <button id="copy-hostname-btn" type="button" class="button secondary">Copy DoT Hostname</button>
               <button id="copy-doh-btn" type="button" class="button secondary">Copy DoH Endpoint</button>
-              <a id="download-mobileconfig-btn" href="/api/apple/mobileconfig" class="button primary" download="lattice-dns.mobileconfig">Download Apple Profile (.mobileconfig)</a>
+              <a id="download-mobileconfig-doh-btn" href="/api/apple/mobileconfig?protocol=doh" class="button primary" download="lattice-dns-doh.mobileconfig">Apple DoH Profile (.mobileconfig)</a>
+              <a id="download-mobileconfig-btn" href="/api/apple/mobileconfig?protocol=dot" class="button secondary" download="lattice-dns-dot.mobileconfig">Apple DoT Profile (853)</a>
             </div>
           </div>
-          <div class="setup-instruction-box">
-            <div class="platform-tabs">
-              <button type="button" class="platform-tab-btn active" data-platform="android">Android (Private DNS)</button>
-              <button type="button" class="platform-tab-btn" data-platform="apple">Apple iOS &amp; macOS</button>
-              <button type="button" class="platform-tab-btn" data-platform="browser">Web Browsers (DoH)</button>
-              <button type="button" class="platform-tab-btn" data-platform="curl">CLI / RFC 8484</button>
+          <div class="connection-guide-split">
+            <div class="setup-instruction-box">
+              <div class="platform-tabs">
+                <button type="button" class="platform-tab-btn active" data-platform="android">Android (Private DNS)</button>
+                <button type="button" class="platform-tab-btn" data-platform="railway">Railway / Cloud DoH (Port 443)</button>
+                <button type="button" class="platform-tab-btn" data-platform="apple">Apple iOS &amp; macOS</button>
+                <button type="button" class="platform-tab-btn" data-platform="browser">Web Browsers (DoH)</button>
+                <button type="button" class="platform-tab-btn" data-platform="curl">CLI / RFC 8484 &amp; JSON</button>
+              </div>
+              <div id="platform-instructions-android" class="instruction-steps">
+                <span>1. Open <strong>Settings</strong> → <strong>Network &amp; Internet</strong> → <strong>Private DNS</strong>.</span>
+                <span>2. Choose <strong>Private DNS provider hostname</strong> and enter: <code id="instruction-hostname" class="code-pill">Not configured</code></span>
+                <span>3. <strong>Important for Railway / Cloud PaaS:</strong> Native Android OS Private DNS strictly requires <strong>TCP Port 853</strong>. On Railway (which exposes HTTPS 443), either enable the <strong>FRP Edge Tunnel</strong> below OR use the <strong>Railway / Cloud DoH (Port 443)</strong> tab with Intra / RethinkDNS / Chrome!</span>
+              </div>
+              <div id="platform-instructions-railway" class="instruction-steps hidden">
+                <span>1. <strong>Zero-FRP Android &amp; Desktop Mode on Railway:</strong> Railway natively terminates TLS on port <strong>443</strong> and routes to Lattice's RFC 8484 + RFC 8427 DoH engine.</span>
+                <span>2. On Android, install <strong>Intra</strong> (by Jigsaw/Google) or <strong>RethinkDNS</strong>, or open <strong>Chrome → Settings → Privacy &amp; Security → Use Secure DNS</strong>.</span>
+                <span>3. Paste your HTTPS DoH URL: <code id="instruction-railway-doh" class="code-pill">https://.../dns-query</code> — works immediately on Railway with full ad-blocking and live Query Log!</span>
+              </div>
+              <div id="platform-instructions-apple" class="instruction-steps hidden">
+                <span>1. Click <strong>Apple DoH Profile (.mobileconfig)</strong> above (recommended for Railway &amp; all networks) or <strong>Apple DoT Profile (853)</strong>.</span>
+                <span>2. On iOS/iPadOS: Open <strong>Settings</strong> → <strong>Profile Downloaded</strong> → <strong>Install</strong>.</span>
+                <span>3. On macOS: Open <strong>System Settings</strong> → <strong>General</strong> → <strong>Device Management</strong> → <strong>Install</strong>.</span>
+              </div>
+              <div id="platform-instructions-browser" class="instruction-steps hidden">
+                <span>1. In Chrome, Brave, Edge, or Firefox, open <strong>Privacy &amp; Security</strong> → <strong>Use Secure DNS</strong>.</span>
+                <span>2. Select <strong>Custom Provider</strong> and enter: <code id="instruction-doh" class="code-pill">https://.../dns-query</code></span>
+              </div>
+              <div id="platform-instructions-curl" class="instruction-steps hidden">
+                <span>Test RFC 8427 JSON or RFC 8484 Wireformat DoH from any terminal:</span>
+                <code class="code-pill">curl -s "http://127.0.0.1:8080/dns-query?name=example.com&amp;type=A"</code>
+              </div>
             </div>
-            <div id="platform-instructions-android" class="instruction-steps">
-              <span>1. Open <strong>Settings</strong> → <strong>Network &amp; Internet</strong> → <strong>Private DNS</strong>.</span>
-              <span>2. Choose <strong>Private DNS provider hostname</strong>.</span>
-              <span>3. Enter hostname: <code id="instruction-hostname" class="code-pill">Not configured</code></span>
-            </div>
-            <div id="platform-instructions-apple" class="instruction-steps hidden">
-              <span>1. Click <strong>Download Apple Profile (.mobileconfig)</strong> above.</span>
-              <span>2. On iOS/iPadOS: Open <strong>Settings</strong> → <strong>Profile Downloaded</strong> → <strong>Install</strong>.</span>
-              <span>3. On macOS: Open <strong>System Settings</strong> → <strong>General</strong> → <strong>Device Management</strong> → <strong>Install</strong>.</span>
-            </div>
-            <div id="platform-instructions-browser" class="instruction-steps hidden">
-              <span>1. In Chrome, Brave, Edge, or Firefox, open <strong>Privacy &amp; Security</strong> → <strong>Use Secure DNS</strong>.</span>
-              <span>2. Select <strong>Custom Provider</strong> and enter: <code id="instruction-doh" class="code-pill">https://.../dns-query</code></span>
-            </div>
-            <div id="platform-instructions-curl" class="instruction-steps hidden">
-              <span>Test JSON DoH resolution from any terminal:</span>
-              <code class="code-pill">curl -s "http://127.0.0.1:8080/dns-query?name=example.com&amp;type=A"</code>
+            <div class="qr-provision-card" id="qr-provision-panel">
+              <div class="qr-mode-pills">
+                <button type="button" class="qr-mode-btn active" data-qr-target="doh">HTTPS DoH QR</button>
+                <button type="button" class="qr-mode-btn" data-qr-target="mobileconfig">Apple Profile QR</button>
+                <button type="button" class="qr-mode-btn" data-qr-target="dot">Android DoT QR</button>
+              </div>
+              <div id="qr-svg-container" class="qr-svg-wrap">
+                <span class="muted">Generating QR...</span>
+              </div>
+              <small id="qr-caption-label" class="muted">Scan with phone camera to provision</small>
             </div>
           </div>
         </article>
@@ -1041,7 +1150,6 @@
             </details>
           </article>
 
-
           <article class="card span-2" id="android-doctor-card">
             <div class="card-header">
               <div>
@@ -1063,13 +1171,13 @@
               <span class="section-number">3</span>
               <div class="section-copy">
                 <h2>FRP Edge Tunnel (Public TCP 853 Proxy)</h2>
-                <p>Expose TCP port 853 through a remote FRPS instance with PROXY protocol v1 client IP preservation.</p>
+                <p>Expose TCP port 853 through a remote FRPS instance with PROXY protocol v1/v2 auto-detection and client IP preservation.</p>
               </div>
             </div>
             <label class="setting-row compact">
               <span>
                 <strong>Enable FRP Client Supervisor (frpc)</strong>
-                <small>Forwards public port 853 on your FRP server to Lattice's internal PROXY v1 bridge (port 8854).</small>
+                <small>Forwards public port 853 on your FRP server to Lattice's internal PROXY v1/v2 bridge (port 8854).</small>
               </span>
               <input id="frp-enabled" type="checkbox" class="switch-input">
             </label>
@@ -1111,7 +1219,7 @@
         <div class="section-action-bar">
           <div>
             <h2>System, Diagnostics &amp; Recovery</h2>
-            <p>Manage telemetry privacy, cache memory limits, domain resolution tracing, backups, and audit logs.</p>
+            <p>Manage telemetry privacy, cache memory limits, domain resolution tracing, Prometheus metrics, backups, and audit logs.</p>
           </div>
           <button id="save-system" type="button" class="button primary">Save System Settings</button>
         </div>
@@ -1140,8 +1248,8 @@
           </article>
 
           <article class="card">
-            <h2>Unbound Memory Cache</h2>
-            <p class="muted">Allocate RAM for RRset and DNS message caches inside Unbound.</p>
+            <h2>Unbound &amp; L1 Memory Cache</h2>
+            <p class="muted">Allocate RAM for RRset and DNS message caches inside Unbound plus the L1 wire cache.</p>
             <div class="form-grid">
               <label class="field">
                 <span>RRset Cache Size</span>
@@ -1158,7 +1266,7 @@
                 </div>
               </label>
             </div>
-            <button id="flush-cache" type="button" class="button danger wide">Purge All Unbound Caches</button>
+            <button id="flush-cache" type="button" class="button danger wide">Purge All Unbound &amp; L1 Caches</button>
           </article>
         </div>
 
@@ -1187,6 +1295,23 @@
             <summary>Show Raw Diagnostic JSON</summary>
             <pre id="diagnostic-result" class="log-view"></pre>
           </details>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>Prometheus / OpenMetrics Telemetry Exporter</h2>
+                <span class="badge info">GET /api/metrics</span>
+              </div>
+              <p>Scrape real-time DNS query counters, L1 wire cache hit ratios, Bloom filter size, and upstream latencies from Prometheus or Grafana.</p>
+            </div>
+            <div class="button-row">
+              <button id="preview-metrics-btn" type="button" class="button secondary">Inspect Live Metrics</button>
+              <a href="/api/metrics" target="_blank" rel="noopener" class="button secondary">Open /api/metrics</a>
+            </div>
+          </div>
+          <pre id="metrics-preview" class="log-view hidden"></pre>
         </article>
 
         <article class="card">
@@ -1258,7 +1383,7 @@
         <article class="card account-card">
           <div>
             <h2>Administrator Session</h2>
-            <p class="muted">Lattice DNS <span id="system-version">1.0.0-gemini</span> • Memory-resident CSRF-protected session</p>
+            <p class="muted">Lattice DNS <span id="system-version">6.0.0-gemini-ultra</span> • Memory-resident CSRF-protected session</p>
           </div>
           <button id="logout" type="button" class="button secondary">Sign Out</button>
         </article>
@@ -1321,6 +1446,7 @@
           <select id="bulk-rules-kind">
             <option value="suffix">Domain &amp; Subdomains</option>
             <option value="exact">Exact Hostname Only</option>
+            <option value="regex">Regular Expression (re)</option>
           </select>
         </label>
         <label class="field">
@@ -1332,6 +1458,21 @@
         <button id="bulk-export-btn" class="button secondary" type="button">Export Current Rules (.txt)</button>
         <button id="bulk-import-submit" class="button primary" type="button">Import Rules</button>
       </div>
+    </div>
+  </div>
+
+    <!-- GLOBAL COMMAND PALETTE MODAL (⌘K / Ctrl+K) -->
+  <div id="cmd-palette-scrim" class="drawer-scrim hidden"></div>
+  <div id="cmd-palette-modal" class="cmd-palette-modal hidden" role="dialog" aria-label="Command Palette">
+    <div class="cmd-search-bar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="cmd-search-input" placeholder="Type a command, page, preset, or domain to trace..." autocomplete="off">
+      <kbd class="kbd-pill">ESC</kbd>
+    </div>
+    <div id="cmd-results-list" class="cmd-results-list"></div>
+    <div class="cmd-footer">
+      <span><strong>↑↓</strong> to navigate • <strong>Enter</strong> to execute</span>
+      <span>Lattice Ultra Command Bar</span>
     </div>
   </div>
 

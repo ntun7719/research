@@ -1,4 +1,4 @@
-"""Compiled client profiles, per-device profile overrides, fast feed match cache, and Android connectivity safeguards."""
+"""Compiled client profiles, per-device profile overrides, regex/wildcard rules, fast feed match cache, and Android connectivity safeguards."""
 from __future__ import annotations
 
 import hashlib
@@ -97,6 +97,7 @@ class Policy:
         self.profile_networks: list[tuple[ipaddress._BaseNetwork, dict[str, Any]]] = []
         self.device_profiles: dict[str, dict[str, Any]] = {}
         self.rules: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.regex_rules: list[tuple[str, re.Pattern[str], dict[str, Any]]] = []
         self.bloom = Bloom()
         self._match_cache: dict[tuple[str, tuple[str, ...]], tuple[str, str] | None] = {}
         self.feed_count = 0
@@ -118,8 +119,15 @@ class Policy:
                 device_map[dev["ip"]] = profile_by_id[prof_id]
 
         rules: dict[tuple[str, str, str], dict[str, Any]] = {}
+        regex_list: list[tuple[str, re.Pattern[str], dict[str, Any]]] = []
         for row in self.store.rule_rows():
-            rules[(row["profile"], row["kind"], row["pattern"])] = row
+            if row["kind"] == "regex":
+                try:
+                    regex_list.append((row["profile"], re.compile(row["pattern"], re.IGNORECASE), row))
+                except re.error:
+                    pass
+            else:
+                rules[(row["profile"], row["kind"], row["pattern"])] = row
 
         bloom = Bloom()
         count = 0
@@ -136,6 +144,7 @@ class Policy:
             self.profile_networks = networks
             self.device_profiles = device_map
             self.rules = rules
+            self.regex_rules = regex_list
             self.bloom = bloom
             self._match_cache.clear()
             self.feed_count = count
@@ -181,6 +190,10 @@ class Policy:
                     row = self.rules.get((scope, "suffix", suffix))
                     if row and (row["expires"] is None or row["expires"] > now):
                         return row
+                for r_scope, compiled_re, r_row in self.regex_rules:
+                    if r_scope == scope and (r_row["expires"] is None or r_row["expires"] > now):
+                        if compiled_re.search(name):
+                            return r_row
         return None
 
     def _feed_match(self, name: str, categories: list[str]) -> tuple[str, str] | None:
@@ -251,7 +264,8 @@ class Policy:
             return {
                 "profiles": len(self.store.config["profiles"]),
                 "device_overrides": len(self.device_profiles),
-                "rules": len(self.rules),
+                "rules": len(self.rules) + len(self.regex_rules),
+                "regex_rules": len(self.regex_rules),
                 "indexed_domains": self.feed_count,
             }
 

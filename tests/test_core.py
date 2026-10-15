@@ -774,5 +774,119 @@ class AndroidPrivateDNSTests(unittest.TestCase):
             app.shutdown()
 
 
+
+
+class FlagshipV5Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(self.tmp.name)
+        self.policy = Policy(self.store)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_regex_and_expiring_rules(self):
+        # 1. Regex rule matching
+        self.store.add_rule(r"^ad[0-9]+\.tracker\.example\.com$", "regex", "deny", "", "*", None)
+        self.policy.compile()
+        self.assertEqual(self.policy.decide("192.168.1.50", "ad42.tracker.example.com").action, "deny")
+        self.assertEqual(self.policy.decide("192.168.1.50", "safe.tracker.example.com").action, "allow")
+
+        # 2. Invalid regex rejected cleanly
+        with self.assertRaises(ValueError):
+            self.store.add_rule("[unclosed-regex", "regex", "deny", "", "*", None)
+
+    def test_l1_dns_cache_and_serve_expired(self):
+        from lattice.transport import DNSCache, rewrite_response
+
+        cache = DNSCache(max_entries=128)
+        q1 = _question("cached.example.com", ident=0x1111)
+        resp1 = rewrite_response(q1, 1, "93.184.216.34", ttl=60)
+        cache.put("cached.example.com", 1, True, resp1)
+
+        # Hit with different transaction ID (0x2222)
+        q2 = _question("cached.example.com", ident=0x2222)
+        hit = cache.get("cached.example.com", 1, True, q2[:2], allow_stale=False)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit[:2], b"\x22\x22")
+        st = cache.stats()
+        self.assertEqual(st["hits"], 1)
+        self.assertEqual(st["active_entries"], 1)
+
+    def test_cname_cloaking_unmasking_and_interception(self):
+        from lattice.transport import synthesize_rr_response, _encode_name, decode_dns_answers
+
+        # Block the hidden tracker target
+        self.store.add_rule("cloaked-tracker.evil.org", "suffix", "deny", "", "*", None)
+        self.policy.compile()
+
+        # Construct a response where analytics.firstparty.com CNAMEs to sub.cloaked-tracker.evil.org
+        q = _question("analytics.firstparty.com", ident=0x3344)
+        cname_pkt = synthesize_rr_response(q, 5, _encode_name("sub.cloaked-tracker.evil.org"), ttl=120)
+        recs = decode_dns_answers(cname_pkt)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["type"], "CNAME")
+        self.assertEqual(recs[0]["data"], "sub.cloaked-tracker.evil.org")
+        self.assertEqual(self.policy.decide("192.168.1.10", recs[0]["data"]).action, "deny")
+
+    def test_12_presets_and_recommended_feed_bundle(self):
+        presets = self.store.get_presets_status()
+        self.assertEqual(len(presets), 12)
+        preset_ids = {p["id"] for p in presets}
+        self.assertIn("ai_bots", preset_ids)
+        self.assertIn("cryptominers", preset_ids)
+        self.assertIn("netflix", preset_ids)
+
+        bundle_res = self.store.install_recommended_bundle()
+        self.assertEqual(bundle_res["added"], 4)
+        self.assertEqual(len(self.store.feeds()), 4)
+
+    def test_prometheus_metrics_and_dual_mobileconfig(self):
+        from lattice.app import Lattice
+
+        app = Lattice(self.tmp.name, resolver_port=15553, dot_port=18893, frp_local_port=18894)
+        try:
+            metrics = app.prometheus_metrics()
+            self.assertIn("lattice_dns_queries_24h_total", metrics)
+            self.assertIn("lattice_dns_l1_cache_hit_ratio_percent", metrics)
+            self.assertIn("lattice_dns_indexed_domains_total", metrics)
+        finally:
+            app.shutdown()
+
+
+
+    def test_qr_code_svg_generation(self):
+        from lattice.integrations import generate_qr_svg
+
+        svg = generate_qr_svg("https://dns.ntun7719.dev/dns-query")
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("viewBox=", svg)
+        self.assertIn("<rect", svg)
+
+    def test_l1_cache_dynamic_ttl_and_eviction(self):
+        from lattice.transport import DNSCache, rewrite_response, decode_dns_answers
+
+        cache = DNSCache(max_entries=64)
+        q1 = _question("ttltest.example.com", ident=0x1234)
+        resp1 = rewrite_response(q1, 1, "93.184.216.34", ttl=120)
+        cache.put("ttltest.example.com", 1, True, resp1)
+
+        # Simulate 30 seconds elapsed
+        key = ("ttltest.example.com", 1, True)
+        cache.entries[key]["expires_at"] = time.time() + 90
+        hit = cache.get("ttltest.example.com", 1, True, b"\x56\x78", allow_stale=False)
+        self.assertIsNotNone(hit)
+        decoded = decode_dns_answers(hit)
+        self.assertEqual(len(decoded), 1)
+        self.assertLessEqual(decoded[0]["ttl"], 90)
+        self.assertGreaterEqual(decoded[0]["ttl"], 88)
+
+        # Evict domain
+        removed = cache.evict("ttltest.example.com")
+        self.assertEqual(removed, 1)
+        self.assertIsNone(cache.get("ttltest.example.com", 1, True, b"\x56\x78", allow_stale=False))
+
+
 if __name__ == "__main__":
     unittest.main()

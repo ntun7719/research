@@ -276,6 +276,18 @@ function renderStatus() {
   if ($("#pill-rewritten")) $("#pill-rewritten").textContent = number(rewritten);
   if ($("#pill-errors")) $("#pill-errors").textContent = number(errors);
 
+  const l1 = s.l1_cache || (s.dot && (s.dot.l1_cache || s.dot.cache)) || {};
+  const hitRatePct = Number(l1.hit_rate != null ? l1.hit_rate : (l1.hit_rate_pct || 0)).toFixed(1) + "%";
+  if ($("#pill-l1-hit")) $("#pill-l1-hit").textContent = hitRatePct;
+  if ($("#l1-hit-rate")) $("#l1-hit-rate").textContent = hitRatePct;
+  if ($("#l1-hit-detail")) {
+    $("#l1-hit-detail").textContent = number(l1.hits || 0) + " hits / " + number(l1.misses || 0) + " misses";
+  }
+  if ($("#l1-active-entries")) $("#l1-active-entries").textContent = number(l1.active_entries || l1.entries || l1.size || 0);
+  if ($("#l1-capacity-detail")) $("#l1-capacity-detail").textContent = "Max " + number(l1.max_entries || 8192) + " RRsets";
+  if ($("#l1-stale-hits")) $("#l1-stale-hits").textContent = number(l1.stale_hits || 0);
+  renderL1CacheEntries(l1.top_entries || []);
+
   const clients = dashboard.top_clients || [];
   const devCount = (state.devices && state.devices.length) || 0;
   if ($("#clients-total")) {
@@ -563,8 +575,8 @@ function renderSetupGuide() {
     },
     {
       done: listenerDone,
-      title: "Expose TCP port 853 to Android clients",
-      help: listenerDone ? "DoT listener is ready" : "Direct port 853 or FRP PROXY v1 bridge",
+      title: "Expose TCP port 853 or HTTPS DoH",
+      help: listenerDone ? "DoT & DoH listeners are ready" : "Direct port 853, FRP PROXY bridge, or Railway 443 DoH",
       target: "private"
     }
   ];
@@ -580,6 +592,19 @@ function renderSetupGuide() {
   $$(".setup-go").forEach(button => button.addEventListener("click", () => switchPage(button.dataset.target)));
 }
 
+function buildSmoothPath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return "M " + pts[0].x + " " + pts[0].y;
+  let d = "M " + pts[0].x + " " + pts[0].y;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i];
+    const p1 = pts[i + 1];
+    const cx = Number(((p0.x + p1.x) / 2).toFixed(1));
+    d += " C " + cx + " " + p0.y + ", " + cx + " " + p1.y + ", " + p1.x + " " + p1.y;
+  }
+  return d;
+}
+
 function renderChart(series) {
   const svg = $("#traffic-chart");
   if (!svg) return;
@@ -589,56 +614,132 @@ function renderChart(series) {
   }
   const width = 1000;
   const height = 250;
-  const padTop = 18;
-  const padBottom = 26;
-  const padX = 18;
+  const padTop = 20;
+  const padBottom = 30;
+  const padLeft = 44;
+  const padRight = 18;
+  const chartWidth = width - padLeft - padRight;
   const chartHeight = height - padTop - padBottom;
-  const max = Math.max(1, ...series.map(item => Number(item.total || 0)));
+  const max = Math.max(4, ...series.map(item => Number(item.total || 0)));
 
   const getCoord = (val, idx) => {
-    const x = series.length === 1 ? width / 2 : padX + (idx * (width - padX * 2)) / (series.length - 1);
+    const x = series.length === 1 ? padLeft + chartWidth / 2 : padLeft + (idx * chartWidth) / (series.length - 1);
     const y = height - padBottom - (Number(val || 0) / max) * chartHeight;
-    return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) };
+    return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), val: Number(val || 0) };
   };
 
   let grid = "";
   for (let i = 0; i <= 4; i++) {
     const y = padTop + (chartHeight / 4) * i;
-    grid += '<line class="chart-grid" x1="' + padX + '" x2="' + (width - padX) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"></line>';
+    const scaleVal = Math.round(max * (1 - i / 4));
+    grid += '<line class="chart-grid" x1="' + padLeft + '" x2="' + (width - padRight) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"></line>';
+    if (i === 0 || i === 2 || i === 4) {
+      grid += '<text class="chart-axis-label" x="' + (padLeft - 8) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end">' + scaleVal + '</text>';
+    }
   }
 
   let totalPoints = series.map((s, i) => getCoord(s.total, i));
   let blockedPoints = series.map((s, i) => getCoord(s.blocked, i));
   if (series.length === 1) {
-    totalPoints = [{ x: padX, y: totalPoints[0].y }, { x: width - padX, y: totalPoints[0].y }];
-    blockedPoints = [{ x: padX, y: blockedPoints[0].y }, { x: width - padX, y: blockedPoints[0].y }];
+    totalPoints = [{ x: padLeft, y: totalPoints[0].y, val: totalPoints[0].val }, { x: width - padRight, y: totalPoints[0].y, val: totalPoints[0].val }];
+    blockedPoints = [{ x: padLeft, y: blockedPoints[0].y, val: blockedPoints[0].val }, { x: width - padRight, y: blockedPoints[0].y, val: blockedPoints[0].val }];
   }
 
-  const totalPoly = totalPoints.map(p => p.x + "," + p.y).join(" ");
-  const blockedPoly = blockedPoints.map(p => p.x + "," + p.y).join(" ");
+  const bottomY = height - padBottom;
   const firstX = totalPoints[0].x;
   const lastX = totalPoints[totalPoints.length - 1].x;
-  const bottomY = height - padBottom;
 
-  const totalArea = firstX + "," + bottomY + " " + totalPoly + " " + lastX + "," + bottomY;
-  const blockedArea = firstX + "," + bottomY + " " + blockedPoly + " " + lastX + "," + bottomY;
+  const totalLinePath = buildSmoothPath(totalPoints);
+  const blockedLinePath = buildSmoothPath(blockedPoints);
+  const totalAreaPath = totalLinePath + " L " + lastX + " " + bottomY + " L " + firstX + " " + bottomY + " Z";
+  const blockedAreaPath = blockedLinePath + " L " + lastX + " " + bottomY + " L " + firstX + " " + bottomY + " Z";
+
+  let xAxisLabels = "";
+  const labelStep = Math.max(1, Math.floor((series.length - 1) / 4));
+  for (let i = 0; i < series.length; i += labelStep) {
+    const pt = totalPoints[i];
+    const bTs = Number(series[i].bucket || 0);
+    if (pt && bTs > 0) {
+      const d = new Date(bTs * 1000);
+      const tStr = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      xAxisLabels += '<text class="chart-axis-label" x="' + pt.x + '" y="' + (height - 8) + '" text-anchor="middle">' + tStr + '</text>';
+    }
+  }
+
+  const dots = totalPoints
+    .map((p, idx) => (p.val > 0 || idx === totalPoints.length - 1 ? '<circle class="chart-dot-total" cx="' + p.x + '" cy="' + p.y + '" r="3.5"/>' : ""))
+    .join("") +
+    blockedPoints
+    .map((p, idx) => (p.val > 0 || idx === blockedPoints.length - 1 ? '<circle class="chart-dot-blocked" cx="' + p.x + '" cy="' + p.y + '" r="3"/>' : ""))
+    .join("");
 
   svg.innerHTML =
     "<defs>" +
       '<linearGradient id="grad-total" x1="0%" y1="0%" x2="0%" y2="100%">' +
-        '<stop offset="0%" stop-color="var(--primary)" stop-opacity="0.32"/>' +
+        '<stop offset="0%" stop-color="var(--primary)" stop-opacity="0.34"/>' +
         '<stop offset="100%" stop-color="var(--primary)" stop-opacity="0.0"/>' +
       "</linearGradient>" +
       '<linearGradient id="grad-blocked" x1="0%" y1="0%" x2="0%" y2="100%">' +
-        '<stop offset="0%" stop-color="var(--red)" stop-opacity="0.36"/>' +
+        '<stop offset="0%" stop-color="var(--red)" stop-opacity="0.38"/>' +
         '<stop offset="100%" stop-color="var(--red)" stop-opacity="0.0"/>' +
       "</linearGradient>" +
     "</defs>" +
     grid +
-    '<polygon class="chart-area-total" points="' + totalArea + '"></polygon>' +
-    '<polygon class="chart-area-blocked" points="' + blockedArea + '"></polygon>' +
-    '<polyline class="chart-line-total" points="' + totalPoly + '"></polyline>' +
-    '<polyline class="chart-line-blocked" points="' + blockedPoly + '"></polyline>';
+    xAxisLabels +
+    '<path class="chart-area-total" d="' + totalAreaPath + '"></path>' +
+    '<path class="chart-area-blocked" d="' + blockedAreaPath + '"></path>' +
+    '<path class="chart-line-total" d="' + totalLinePath + '"></path>' +
+    '<path class="chart-line-blocked" d="' + blockedLinePath + '"></path>' +
+    dots;
+}
+
+function renderL1CacheEntries(entries) {
+  const body = $("#l1-entries-body");
+  if (!body) return;
+  if (!entries || !entries.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty-state">No cached RRsets in L1 memory yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = entries.slice(0, 12).map(item =>
+    "<tr>" +
+      '<td class="domain">' + escapeHtml(item.domain) + "</td>" +
+      '<td><span class="code-pill">' + escapeHtml(item.type || "A") + "</span></td>" +
+      "<td><small>" + escapeHtml(item.summary || "NOERROR") + "</small></td>" +
+      '<td><span class="latency-pill">' + number(item.ttl_remaining || 0) + "s</span></td>" +
+      "<td><strong>" + number(item.hits || 0) + "</strong></td>" +
+      '<td class="cell-right"><button type="button" class="btn-mini-action evict-l1-btn" data-domain="' + escapeHtml(item.domain) + '">Evict</button></td>' +
+    "</tr>"
+  ).join("");
+
+  $$(".evict-l1-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const dom = btn.dataset.domain;
+      try {
+        await api("/api/cache/evict", { method: "POST", body: { domain: dom } });
+        toast("Evicted " + dom + " from L1 cache");
+        await refreshStatus();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  });
+}
+
+async function loadQrCode(target) {
+  const wrap = $("#qr-svg-container");
+  const cap = $("#qr-caption-label");
+  if (!wrap) return;
+  try {
+    const res = await api("/api/qr?target=" + encodeURIComponent(target || "doh"));
+    if (res && res.svg) {
+      wrap.innerHTML = res.svg;
+    }
+    if (cap && res && res.label) {
+      cap.textContent = res.label;
+    }
+  } catch (_) {
+    wrap.innerHTML = '<span class="muted">QR ready after login</span>';
+  }
 }
 
 function renderHealth(rows) {
@@ -904,10 +1005,23 @@ function renderRules() {
     ? rules.map(rule => {
         const badgeClass = rule.action === "deny" ? "blocked" : rule.action === "allow" ? "allowed" : "rewritten";
         const badgeLabel = rule.action === "deny" ? "Block" : rule.action === "allow" ? "Allow" : "Rewrite → " + (rule.value || "");
+        let scopeText = "Exact hostname only";
+        if (rule.kind === "suffix") {
+          scopeText = "Domain & subdomains (*." + escapeHtml(rule.pattern) + ")";
+        } else if (rule.kind === "regex") {
+          scopeText = '<span class="badge info">Regex (re)</span> <code>' + escapeHtml(rule.pattern) + "</code>";
+        }
+        let expiryPill = "";
+        if (rule.expires_at && Number(rule.expires_at) > 0) {
+          const rem = Math.max(0, Math.round(Number(rule.expires_at) - Date.now() / 1000));
+          expiryPill = rem > 0
+            ? ' <span class="badge warn">TTL ' + Math.ceil(rem / 60) + "m</span>"
+            : ' <span class="badge error">Expired</span>';
+        }
         return (
           "<tr>" +
-            '<td class="domain">' + escapeHtml(rule.pattern) + "</td>" +
-            "<td>" + (rule.kind === "suffix" ? "Domain & subdomains (*." + escapeHtml(rule.pattern) + ")" : "Exact hostname only") + "</td>" +
+            '<td class="domain">' + escapeHtml(rule.pattern) + expiryPill + "</td>" +
+            "<td>" + scopeText + "</td>" +
             '<td><span class="badge ' + badgeClass + '">' + escapeHtml(badgeLabel) + "</span></td>" +
             '<td><span class="code-pill">' + escapeHtml(profileName(rule.profile)) + "</span></td>" +
             '<td class="cell-right"><button type="button" class="btn-mini-action delete-rule" data-id="' + rule.id + '">Delete</button></td>' +
@@ -954,7 +1068,7 @@ function renderFeeds() {
           "</div>"
         );
       }).join("")
-    : '<div class="empty-state">No subscription blocklists added yet. Add a list using the form or quick-fill buttons.</div>';
+    : '<div class="empty-state">No subscription blocklists added yet. Click "1-Click Recommended Bundle" or add a feed below.</div>';
 
   $$(".feed-refresh").forEach(button => {
     button.addEventListener("click", () => refreshFeed(Number(button.dataset.id)));
@@ -1283,9 +1397,10 @@ function renderPrivateForm() {
   $("#frp-token").value = "";
   toggleFrpFields();
 
-  const hostText = cfg.hostname || "dns.example.com";
+  const hostText = cfg.hostname || window.location.hostname || "dns.example.com";
   if ($("#instruction-hostname")) $("#instruction-hostname").textContent = hostText;
   if ($("#instruction-doh")) $("#instruction-doh").textContent = "https://" + hostText + "/dns-query";
+  if ($("#instruction-railway-doh")) $("#instruction-railway-doh").textContent = "https://" + hostText + "/dns-query";
 }
 
 function toggleFrpFields() {
@@ -1335,7 +1450,6 @@ function renderSystemForm() {
   $("#message-cache").value = cfg.cache.message_mb || 48;
   $("#config-editor").value = JSON.stringify(cfg, null, 2);
 }
-
 
 async function loadAndroidDoctor() {
   const grid = $("#android-doctor-grid");
@@ -1403,9 +1517,9 @@ function switchPage(target) {
     dashboard: ["Dashboard", "Real-time encrypted DNS telemetry, policy enforcement, and upstream health."],
     queries: ["Query Log", "Inspect live DNS lookups, filter decisions, and packet forensics."],
     blocking: ["Blocking", "Configure protection categories, remote blocklists, custom rules, and client profiles."],
-    dns: ["DNS Settings", "Manage encrypted DoT upstreams, local LAN records, and Unbound resolver behavior."],
-    private: ["Private DNS", "Set up Android Private DNS, TLS certificates, Cloudflare DNS sync, and FRP transport."],
-    system: ["System", "Privacy controls, cache sizing, resolution diagnostics, backups, and security audit logs."]
+    dns: ["DNS Settings", "Manage encrypted DoT upstreams, L1 wire caching, local LAN records, and Unbound resolver behavior."],
+    private: ["Private DNS", "Set up Android Private DNS, Railway DoH, TLS certificates, Cloudflare DNS sync, and FRP transport."],
+    system: ["System", "Privacy controls, cache sizing, resolution diagnostics, Prometheus metrics, backups, and security audit logs."]
   };
 
   const info = titles[target] || [target, ""];
@@ -1416,7 +1530,7 @@ function switchPage(target) {
   closeQueryDrawer();
 
   if (target === "queries") loadQueries().catch(err => toast(err.message, true));
-  if (target === "private") loadAndroidDoctor();
+  if (target === "private") { loadAndroidDoctor(); loadQrCode("doh"); }
   if (target === "system") loadAudit();
 }
 
@@ -1637,6 +1751,36 @@ function bindEvents() {
     }
   });
 
+  // 1-Click Recommended 4-Feed Security Bundle
+  $("#install-bundle-btn")?.addEventListener("click", async () => {
+    const btn = $("#install-bundle-btn");
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Installing 4 Feeds...";
+      }
+      const res = await api("/api/feeds/bundle", { method: "POST", body: {} });
+      state.feeds = res.feeds || (await api("/api/feeds"));
+      renderFeeds();
+      toast("Installed " + (res.installed || 0) + " curated feeds (" + (res.total_bundle || 4) + " active) — syncing in background");
+      setTimeout(async () => {
+        try {
+          state.feeds = await api("/api/feeds");
+          state.status = await api("/api/status?window=" + state.timeWindow);
+          renderFeeds();
+          renderStatus();
+        } catch (_) {}
+      }, 2500);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "1-Click Recommended Bundle (4 Lists)";
+      }
+    }
+  });
+
   // Curated Blocklist Quick-Fill
   $$(".preset-feed-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -1686,17 +1830,37 @@ function bindEvents() {
     $("#rule-value-wrap").classList.toggle("hidden", $("#rule-action").value !== "rewrite");
   });
 
+  $("#rule-kind")?.addEventListener("change", () => {
+    const kind = $("#rule-kind").value;
+    if ($("#rule-subdomains")) {
+      $("#rule-subdomains").checked = kind === "suffix";
+      $("#rule-subdomains").disabled = kind === "regex";
+    }
+  });
+
+  $("#rule-subdomains")?.addEventListener("change", () => {
+    if ($("#rule-kind") && $("#rule-kind").value !== "regex") {
+      $("#rule-kind").value = $("#rule-subdomains").checked ? "suffix" : "exact";
+    }
+  });
+
   $("#rule-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const kindSelect = $("#rule-kind") ? $("#rule-kind").value : "";
+      const kind = kindSelect === "regex"
+        ? "regex"
+        : ($("#rule-subdomains") && !$("#rule-subdomains").checked ? "exact" : (kindSelect || "suffix"));
+      const ttlSeconds = Number($("#rule-ttl") ? $("#rule-ttl").value : 0);
       await api("/api/rules", {
         method: "POST",
         body: {
           pattern: $("#rule-pattern").value.trim(),
-          kind: $("#rule-subdomains").checked ? "suffix" : "exact",
+          kind,
           action: $("#rule-action").value,
           profile: $("#rule-profile").value,
-          value: $("#rule-value").value.trim()
+          value: $("#rule-value").value.trim(),
+          ttl_seconds: ttlSeconds
         }
       });
       $("#rule-pattern").value = "";
@@ -1927,7 +2091,8 @@ function bindEvents() {
     try {
       if (btn) btn.disabled = true;
       await api("/api/cache/flush", { method: "POST", body: {} });
-      toast("Unbound DNS cache flushed");
+      await refreshStatus();
+      toast("L1 wire cache & Unbound resolver cache flushed");
     } catch (err) {
       toast(err.message, true);
     } finally {
@@ -1935,6 +2100,7 @@ function bindEvents() {
     }
   };
   $("#flush-cache-btn")?.addEventListener("click", () => handleFlushCache($("#flush-cache-btn")));
+  $("#flush-l1-btn")?.addEventListener("click", () => handleFlushCache($("#flush-l1-btn")));
   $("#flush-cache")?.addEventListener("click", () => handleFlushCache($("#flush-cache")));
 
   // Private DNS & Platform Tabs
@@ -1942,7 +2108,7 @@ function bindEvents() {
     btn.addEventListener("click", () => {
       $$(".platform-tab-btn").forEach(b => b.classList.toggle("active", b === btn));
       const plat = btn.dataset.platform;
-      ["android", "apple", "browser", "curl"].forEach(id => {
+      ["android", "railway", "apple", "browser", "curl"].forEach(id => {
         const el = $("#platform-instructions-" + id);
         if (el) el.classList.toggle("hidden", id !== plat);
       });
@@ -2068,6 +2234,20 @@ function bindEvents() {
     }
   });
 
+  $("#preview-metrics-btn")?.addEventListener("click", async () => {
+    const pre = $("#metrics-preview");
+    if (!pre) return;
+    try {
+      const res = await fetch("/api/metrics");
+      const text = await res.text();
+      pre.textContent = text;
+      pre.classList.remove("hidden");
+      toast("Loaded Prometheus / OpenMetrics snapshot");
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
   $("#diagnostic-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     $("#diagnostic-friendly").classList.add("hidden");
@@ -2150,12 +2330,161 @@ function bindEvents() {
     }
   });
 
+  // Collapsible Onboarding Checklist
+  $("#toggle-setup-guide-btn")?.addEventListener("click", () => {
+    const guide = $("#setup-guide");
+    const btn = $("#toggle-setup-guide-btn");
+    if (!guide || !btn) return;
+    const collapsed = guide.classList.toggle("collapsed");
+    btn.textContent = collapsed ? "Expand" : "Collapse";
+  });
+
+  // QR Provisioning Mode Pills
+  $$(".qr-mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $$(".qr-mode-btn").forEach(b => b.classList.toggle("active", b === btn));
+      loadQrCode(btn.dataset.qrTarget || "doh");
+    });
+  });
+
+  // Global Command Palette (⌘K / Ctrl+K)
+  let cmdActiveIndex = 0;
+  let currentCmdItems = [];
+
+  const getCommandCatalog = (queryText) => {
+    const q = (queryText || "").trim().toLowerCase();
+    const items = [
+      { title: "Go to Dashboard", sub: "Real-time telemetry & KPI overview", badge: "Page", run: () => switchPage("dashboard") },
+      { title: "Go to Query Log", sub: "Inspect live DNS queries & packet forensics", badge: "Page", run: () => switchPage("queries") },
+      { title: "Go to Blocking & Rules", sub: "Manage blocklists, 12 presets & regex rules", badge: "Page", run: () => switchPage("blocking") },
+      { title: "Go to DNS Settings & L1 Cache", sub: "Upstreams, L1 wire cache & split-horizon LAN", badge: "Page", run: () => switchPage("dns") },
+      { title: "Go to Private DNS & Railway Setup", sub: "TLS certificates, Android Doctor & QR provisioning", badge: "Page", run: () => switchPage("private") },
+      { title: "Go to System & Diagnostics", sub: "Privacy mode, Prometheus metrics & backups", badge: "Page", run: () => switchPage("system") },
+      { title: "Install Recommended 4-Feed Security Bundle", sub: "StevenBlack, AdGuard SDN, URLHaus & Peter Lowe", badge: "Action", run: () => { switchPage("blocking"); $("#install-bundle-btn")?.click(); } },
+      { title: "Flush L1 Wire Cache & Unbound Resolver Cache", sub: "Purge all cached DNS RRsets immediately", badge: "Action", run: () => $("#flush-l1-btn")?.click() },
+      { title: "Run Android Private DNS Readiness Doctor", sub: "Verify TLS 1.3 ALPN dot, EDNS0 & SOA compliance", badge: "Verify", run: () => { switchPage("private"); loadAndroidDoctor(); } },
+      { title: "Run Live DoT Upstream Benchmark", sub: "Compare Cloudflare, Quad9, Google, AdGuard & Mullvad", badge: "Action", run: () => { switchPage("dns"); $("#run-benchmark-btn")?.click(); } },
+      { title: "Pause Policy Blocking for 5 Minutes", sub: "Temporarily bypass blocklists and rules", badge: "Snooze", run: async () => { const res = await api("/api/blocking/pause", { method: "POST", body: { seconds: 300 } }); updateSnoozeUI(res); toast("Blocking paused for 5m"); } },
+      { title: "Resume Policy Blocking Immediately", sub: "Re-enable all blocklists and custom rules", badge: "Policy", run: async () => { const res = await api("/api/blocking/pause", { method: "POST", body: { seconds: 0 } }); updateSnoozeUI(res); toast("Policy blocking resumed"); } },
+      { title: "Toggle Dark / Light Theme", sub: "Switch control plane color palette", badge: "UI", run: () => $("#theme-toggle")?.click() }
+    ];
+
+    (state.presets || []).forEach(p => {
+      items.push({
+        title: (p.blocked ? "Unblock " : "Block ") + p.name,
+        sub: p.description,
+        badge: p.blocked ? "Blocked" : "Preset",
+        run: async () => {
+          await api("/api/rules/presets/toggle", { method: "POST", body: { preset: p.id, enabled: !p.blocked } });
+          toast((!p.blocked ? "Blocked " : "Unblocked ") + p.name);
+          await refreshRulesAndPresets();
+        }
+      });
+    });
+
+    if (q && q.includes(".") && !q.includes(" ")) {
+      items.unshift({
+        title: "Trace Domain in Diagnostic Simulator: " + q,
+        sub: "Test policy verdict & live Unbound resolution for " + q,
+        badge: "Diagnostic",
+        run: () => {
+          switchPage("system");
+          $("#diag-name").value = q;
+          $("#diagnostic-form").dispatchEvent(new Event("submit", { cancelable: true }));
+        }
+      });
+    }
+
+    if (!q) return items.slice(0, 12);
+    return items.filter(it => (it.title + " " + it.sub + " " + it.badge).toLowerCase().includes(q)).slice(0, 14);
+  };
+
+  const renderCmdResults = () => {
+    const listEl = $("#cmd-results-list");
+    const inputEl = $("#cmd-search-input");
+    if (!listEl || !inputEl) return;
+    currentCmdItems = getCommandCatalog(inputEl.value);
+    if (cmdActiveIndex >= currentCmdItems.length) cmdActiveIndex = 0;
+    if (!currentCmdItems.length) {
+      listEl.innerHTML = '<div class="empty-state">No matching commands. Type a domain (e.g. example.com) to run a live trace.</div>';
+      return;
+    }
+    listEl.innerHTML = currentCmdItems.map((it, idx) =>
+      '<button type="button" class="cmd-item ' + (idx === cmdActiveIndex ? "active" : "") + '" data-cmd-idx="' + idx + '">' +
+        '<div class="cmd-item-main">' +
+          '<span class="cmd-item-title">' + escapeHtml(it.title) + "</span>" +
+          '<span class="cmd-item-sub">' + escapeHtml(it.sub) + "</span>" +
+        "</div>" +
+        '<span class="badge info">' + escapeHtml(it.badge) + "</span>" +
+      "</button>"
+    ).join("");
+
+    $$("#cmd-results-list .cmd-item").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const item = currentCmdItems[Number(btn.dataset.cmdIdx)];
+        closeCmdPalette();
+        if (item && item.run) item.run();
+      });
+    });
+  };
+
+  const openCmdPalette = () => {
+    const modal = $("#cmd-palette-modal");
+    const scrim = $("#cmd-palette-scrim");
+    const input = $("#cmd-search-input");
+    if (!modal || !scrim || !input) return;
+    cmdActiveIndex = 0;
+    input.value = "";
+    renderCmdResults();
+    modal.classList.remove("hidden");
+    scrim.classList.remove("hidden");
+    setTimeout(() => input.focus(), 20);
+  };
+
+  const closeCmdPalette = () => {
+    $("#cmd-palette-modal")?.classList.add("hidden");
+    $("#cmd-palette-scrim")?.classList.add("hidden");
+  };
+
+  $("#cmd-palette-btn")?.addEventListener("click", openCmdPalette);
+  $("#cmd-palette-scrim")?.addEventListener("click", closeCmdPalette);
+  $("#cmd-search-input")?.addEventListener("input", () => {
+    cmdActiveIndex = 0;
+    renderCmdResults();
+  });
+  $("#cmd-search-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (currentCmdItems.length) {
+        cmdActiveIndex = (cmdActiveIndex + 1) % currentCmdItems.length;
+        renderCmdResults();
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (currentCmdItems.length) {
+        cmdActiveIndex = (cmdActiveIndex - 1 + currentCmdItems.length) % currentCmdItems.length;
+        renderCmdResults();
+      }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = currentCmdItems[cmdActiveIndex];
+      closeCmdPalette();
+      if (item && item.run) item.run();
+    }
+  });
+
   // Global Keyboard Shortcuts
   document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      openCmdPalette();
+      return;
+    }
     const tag = document.activeElement ? document.activeElement.tagName : "";
     if (e.key === "Escape") {
       closeQueryDrawer();
       closeBulkModal();
+      closeCmdPalette();
       $("#snooze-menu")?.classList.add("hidden");
       return;
     }

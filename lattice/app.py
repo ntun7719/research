@@ -1,4 +1,4 @@
-"""Lattice DNS control plane, Android Private DNS readiness doctor, background services and HTTP API."""
+"""Lattice DNS control plane, L1 cache inspector, RFC 8427 JSON DoH, Prometheus metrics, Android readiness doctor, and HTTP API."""
 from __future__ import annotations
 
 import base64
@@ -23,8 +23,9 @@ from .config import hostname, validate_config
 from .feeds import FeedManager
 from .integrations import CertificateVault, CloudflareDNS, FRPSupervisor
 from .policy import Policy, get_safesearch_rewrite, is_android_essential
+from .integrations import generate_qr_svg
 from .resolver import ResolverManager, _question, benchmark_upstreams, probe_dot
-from .store import Store
+from .store import RECOMMENDED_FEED_BUNDLE, Store
 from .transport import (
     DNSGateway,
     decode_dns_answers,
@@ -176,6 +177,7 @@ class Lattice:
             "uptime": int(time.time() - self.started),
             "resolver": self.resolver.status(),
             "dot": self.gateway.status(),
+            "l1_cache": self.gateway.cache.stats(),
             "tls": self.certs.status(),
             "frp": self.frp.status(),
             "policy": self.policy.status(),
@@ -186,6 +188,59 @@ class Lattice:
             "upstreams": health,
             "jobs": self.jobs.snapshot(),
         }
+
+    def prometheus_metrics(self) -> str:
+        """Render Prometheus OpenMetrics exposition format for Grafana/Prometheus scraping."""
+        st = self.status(window=86400)
+        dash = st["dashboard"]
+        pol = st["policy"]
+        cache = st["dot"].get("l1_cache", {})
+        up_healthy = sum(1 for u in st["upstreams"] if u.get("healthy") == 1)
+        lines = [
+            "# HELP lattice_dns_uptime_seconds Control plane uptime in seconds",
+            "# TYPE lattice_dns_uptime_seconds gauge",
+            f"lattice_dns_uptime_seconds {st['uptime']}",
+            "# HELP lattice_dns_queries_24h_total Queries processed in last 24h window",
+            "# TYPE lattice_dns_queries_24h_total gauge",
+            f"lattice_dns_queries_24h_total {dash['total']}",
+            "# HELP lattice_dns_blocked_24h_total Blocked queries in last 24h window",
+            "# TYPE lattice_dns_blocked_24h_total gauge",
+            f"lattice_dns_blocked_24h_total {dash['blocked']}",
+            "# HELP lattice_dns_latency_ms_avg Mean query resolution latency in milliseconds",
+            "# TYPE lattice_dns_latency_ms_avg gauge",
+            f"lattice_dns_latency_ms_avg {dash['latency']}",
+            "# HELP lattice_dns_indexed_domains_total Domains active in Bloom filter and SQLite",
+            "# TYPE lattice_dns_indexed_domains_total gauge",
+            f"lattice_dns_indexed_domains_total {pol['indexed_domains']}",
+            "# HELP lattice_dns_l1_cache_entries Active RRset entries in L1 wire cache",
+            "# TYPE lattice_dns_l1_cache_entries gauge",
+            f"lattice_dns_l1_cache_entries {cache.get('entries', 0)}",
+            "# HELP lattice_dns_l1_cache_hit_ratio_percent L1 wire cache hit rate percentage",
+            "# TYPE lattice_dns_l1_cache_hit_ratio_percent gauge",
+            f"lattice_dns_l1_cache_hit_ratio_percent {cache.get('hit_rate_pct', 0.0)}",
+            "# HELP lattice_dns_upstreams_healthy Healthy DoT upstream resolvers",
+            "# TYPE lattice_dns_upstreams_healthy gauge",
+            f"lattice_dns_upstreams_healthy {up_healthy}",
+            "",
+        ]
+        return "\n".join(lines)
+
+    def install_recommended_feeds(self) -> dict[str, Any]:
+        """Install the 4-feed Recommended Security Bundle and launch background sync."""
+        existing = {f["url"] for f in self.feeds.list()}
+        added = 0
+        for item in RECOMMENDED_FEED_BUNDLE:
+            if item["url"] not in existing:
+                try:
+                    self.feeds.add(item["name"], item["url"], item["category"], item["format"], True)
+                    added += 1
+                except Exception:
+                    pass
+        try:
+            self.jobs.launch("feed_refresh", self.feeds.refresh_all)
+        except Exception:
+            pass
+        return {"ok": True, "added": added, "total": len(self.feeds.list())}
 
     def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict) or "config" not in payload:
@@ -204,6 +259,7 @@ class Lattice:
             self.store.set_config(new_config)
             self.resolver.apply(new_config)
             self.policy.compile()
+            self.gateway.cache.clear()
             self.frp.apply(new_config)
         except Exception:
             self.store.set_config(old_config)
@@ -254,15 +310,36 @@ class Lattice:
             "profile": decision.profile,
             "value": decision.value,
         }
+        fqdn_dot = (name + ".") if name else "."
         if decision.action == "deny":
             return {
+                "Status": 3,
+                "TC": False,
+                "RD": True,
+                "RA": True,
+                "AD": False,
+                "CD": False,
+                "Question": [{"name": fqdn_dot, "type": qtype}],
+                "Answer": [],
+                "Comment": f"Blocked by Lattice DNS ({decision.source})",
                 "name": name,
                 "qtype": qtype,
                 "policy": policy_result,
                 "resolver": {"skipped": True, "reason": "policy_block"},
             }
         if decision.action == "rewrite":
+            rec_type = 1 if ":" not in decision.value else 28
+            ans_list = [{"name": fqdn_dot, "type": rec_type, "TTL": 60, "data": decision.value}] if qtype in (rec_type, 255) else []
             return {
+                "Status": 0,
+                "TC": False,
+                "RD": True,
+                "RA": True,
+                "AD": False,
+                "CD": False,
+                "Question": [{"name": fqdn_dot, "type": qtype}],
+                "Answer": ans_list,
+                "Comment": f"Rewritten locally ({decision.source})",
                 "name": name,
                 "qtype": qtype,
                 "policy": policy_result,
@@ -279,25 +356,43 @@ class Lattice:
             response, fb_note = self.gateway._forward_query(packet, name, qtype)
             latency = round((time.monotonic() - started) * 1000, 2)
             records = decode_dns_answers(response)
+            rcode = response[3] & 15
+            ad_flag = bool(response[3] & 0x20)
             resolver_info = {
                 "skipped": False,
-                "rcode": response[3] & 15,
+                "rcode": rcode,
                 "answers": struct.unpack("!H", response[6:8])[0],
                 "authority": struct.unpack("!H", response[8:10])[0],
                 "additional": struct.unpack("!H", response[10:12])[0],
-                "dnssec_authenticated": bool(response[3] & 0x20),
+                "dnssec_authenticated": ad_flag,
                 "latency": latency,
                 "question_bytes": q_end - 12,
+                "wire_bytes": len(response),
                 "records": records,
                 "via": fb_note or self.resolver.status().get("mode", "unbound"),
             }
+            doh_answers = [
+                {"name": (r["name"].rstrip(".") + ".") if r.get("name") else fqdn_dot, "type": r.get("rtype", qtype), "TTL": r.get("ttl", 60), "data": r.get("data", "")}
+                for r in records
+            ]
         except Exception as exc:
+            rcode = 2
+            ad_flag = False
+            doh_answers = []
             resolver_info = {
                 "skipped": False,
                 "error": str(exc),
                 "reason": "resolver_unreachable",
             }
         return {
+            "Status": rcode,
+            "TC": False,
+            "RD": True,
+            "RA": True,
+            "AD": ad_flag,
+            "CD": False,
+            "Question": [{"name": fqdn_dot, "type": qtype}],
+            "Answer": doh_answers,
             "name": name,
             "qtype": qtype,
             "policy": policy_result,
@@ -358,7 +453,7 @@ class Lattice:
             and (synth_nx[3] & 15) == 3
             and struct.unpack("!H", synth_nx[8:10])[0] == 1
             and struct.unpack("!H", synth_nx[10:12])[0] == 1
-            and b"\x00\x00\x29\x04\xd0\x00\x00\x80\x00\x00\x00" in synth_nx  # DO bit echoed!
+            and b"\x00\x00\x29\x04\xd0\x00\x00\x80\x00\x00\x00" in synth_nx
             and struct.unpack("!H", synth_rw[6:8])[0] == 0
             and struct.unpack("!H", synth_rw[8:10])[0] == 1
             and struct.unpack("!H", synth_rw[10:12])[0] == 1
@@ -443,8 +538,8 @@ class Lattice:
         if on_railway and not frp_enabled:
             transport_ok = False
             transport_detail = (
-                "Running on Railway without FRP enabled! Railway web domains only expose HTTP/443, NOT TCP/853. "
-                "Enable Step 3 (FRP Edge Tunnel) to a public port 853 server so Android Private DNS can connect."
+                "Running on Railway without FRP enabled! Railway web domains only expose HTTP/443 (DoH), NOT TCP/853. "
+                "Enable Step 3 (FRP Edge Tunnel) to a public port 853 server, or use HTTPS DoH (/dns-query) on Android."
             )
         elif frp_enabled:
             transport_ok = bool(dot_status.get("running") and frp_status.get("state") == "online")
@@ -470,6 +565,7 @@ class Lattice:
             "passed": passed,
             "total": len(checks),
             "hostname": fqdn,
+            "on_railway": on_railway,
             "checks": checks,
         }
 
@@ -603,13 +699,36 @@ class Handler(BaseHTTPRequestHandler):
                 elif "name" in params:
                     name = params["name"][0]
                     type_str = params.get("type", ["1"])[0]
-                    qtype_map = {"A": 1, "AAAA": 28, "CNAME": 5, "TXT": 16, "MX": 15, "PTR": 12, "HTTPS": 65}
+                    qtype_map = {"A": 1, "NS": 2, "CNAME": 5, "SOA": 6, "PTR": 12, "MX": 15, "TXT": 16, "AAAA": 28, "SRV": 33, "SVCB": 64, "HTTPS": 65}
                     try:
                         qtype = int(type_str) if type_str.isdigit() else qtype_map.get(type_str.upper(), 1)
                     except ValueError:
                         qtype = 1
-                    diag = self.app.diagnose(name, qtype, client)
-                    return self._json(200, diag, {"Access-Control-Allow-Origin": "*"})
+                    # Execute via gateway so JSON DoH queries are policy-filtered, cached, and logged
+                    pkt = self.app.make_query(name, qtype, edns0=True)
+                    t0 = time.monotonic()
+                    resp_wire = self.app.gateway.handle_query(pkt, client, transport="doh")
+                    lat = round((time.monotonic() - t0) * 1000, 2)
+                    rcode = resp_wire[3] & 15 if len(resp_wire) >= 4 else 2
+                    ad_flag = bool(resp_wire[3] & 0x20) if len(resp_wire) >= 4 else False
+                    records = decode_dns_answers(resp_wire)
+                    fqdn_dot = (name.strip().rstrip(".") + ".") if name.strip().rstrip(".") else "."
+                    doh_answers = [
+                        {"name": (r["name"].rstrip(".") + ".") if r.get("name") else fqdn_dot, "type": r.get("rtype", qtype), "TTL": r.get("ttl", 60), "data": r.get("data", "")}
+                        for r in records
+                    ]
+                    payload = {
+                        "Status": rcode,
+                        "TC": False,
+                        "RD": True,
+                        "RA": True,
+                        "AD": ad_flag,
+                        "CD": False,
+                        "Question": [{"name": fqdn_dot, "type": qtype}],
+                        "Answer": doh_answers,
+                        "LatencyMs": lat,
+                    }
+                    return self._json(200, payload, {"Access-Control-Allow-Origin": "*"})
 
             if path == "/healthz":
                 state = self.app.resolver.status()
@@ -630,23 +749,59 @@ class Handler(BaseHTTPRequestHandler):
 
             self._require()
 
+            if path == "/api/metrics":
+                text = self.app.prometheus_metrics().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(text)))
+                self.end_headers()
+                self.wfile.write(text)
+                return
+
+            if path == "/api/qr":
+                params = urllib.parse.parse_qs(parsed.query)
+                target = params.get("target", ["doh"])[0].lower()
+                host_val = self.app.store.config.get("hostname", "").strip() or self.headers.get("Host", "dns.lattice.local").split(":")[0]
+                if target == "dot":
+                    qr_text = host_val
+                    label = f"Android Private DNS (DoT): {host_val}"
+                elif target == "mobileconfig":
+                    qr_text = f"https://{host_val}/api/apple/mobileconfig?protocol=doh"
+                    label = f"Apple iOS/macOS DoH Profile"
+                else:
+                    qr_text = f"https://{host_val}/dns-query"
+                    label = f"HTTPS DoH Endpoint: {qr_text}"
+                return self._json(200, {"svg": generate_qr_svg(qr_text), "payload": qr_text, "label": label, "target": target})
+
             if path == "/api/diagnostics/android":
                 return self._json(200, self.app.android_readiness())
 
             if path == "/api/apple/mobileconfig":
-                hostname_val = self.app.store.config.get("hostname", "").strip() or "dns.lattice.local"
+                params = urllib.parse.parse_qs(parsed.query)
+                proto = params.get("protocol", ["doh"])[0].lower()
+                hostname_val = self.app.store.config.get("hostname", "").strip() or self.headers.get("Host", "dns.lattice.local").split(":")[0]
                 uuid_main = str(uuid.uuid4())
                 uuid_dns = str(uuid.uuid4())
+                if proto == "dot":
+                    dns_settings_inner = f"""                <key>DNSProtocol</key>
+                <string>TLS</string>
+                <key>ServerName</key>
+                <string>{hostname_val}</string>"""
+                else:
+                    dns_settings_inner = f"""                <key>DNSProtocol</key>
+                <string>HTTPS</string>
+                <key>ServerURL</key>
+                <string>https://{hostname_val}/dns-query</string>"""
                 xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>PayloadDisplayName</key>
-    <string>Lattice DNS ({hostname_val})</string>
+    <string>Lattice DNS ({hostname_val} - {proto.upper()})</string>
     <key>PayloadDescription</key>
-    <string>Configures encrypted DNS over TLS &amp; HTTPS via Lattice DNS</string>
+    <string>Configures encrypted DNS over {proto.upper()} via Lattice DNS</string>
     <key>PayloadIdentifier</key>
-    <string>com.latticedns.profile.{hostname_val}</string>
+    <string>com.latticedns.profile.{proto}.{hostname_val}</string>
     <key>PayloadOrganization</key>
     <string>Lattice DNS</string>
     <key>PayloadRemovalDisallowed</key>
@@ -665,17 +820,14 @@ class Handler(BaseHTTPRequestHandler):
             <key>PayloadVersion</key>
             <integer>1</integer>
             <key>PayloadIdentifier</key>
-            <string>com.latticedns.dns.{hostname_val}</string>
+            <string>com.latticedns.dns.{proto}.{hostname_val}</string>
             <key>PayloadUUID</key>
             <string>{uuid_dns}</string>
             <key>PayloadDisplayName</key>
-            <string>Lattice Encrypted DNS</string>
+            <string>Lattice Encrypted DNS ({proto.upper()})</string>
             <key>DNSSettings</key>
             <dict>
-                <key>DNSProtocol</key>
-                <string>HTTPS</string>
-                <key>ServerURL</key>
-                <string>https://{hostname_val}/dns-query</string>
+{dns_settings_inner}
             </dict>
         </dict>
     </array>
@@ -684,7 +836,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = xml_payload.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-apple-aspen-config")
-                self.send_header("Content-Disposition", f'attachment; filename="lattice-dns-{hostname_val}.mobileconfig"')
+                self.send_header("Content-Disposition", f'attachment; filename="lattice-dns-{proto}-{hostname_val}.mobileconfig"')
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -704,7 +856,14 @@ class Handler(BaseHTTPRequestHandler):
                 custom = self.app.store.config.get("upstreams", [])
                 return self._json(200, {"upstreams": benchmark_upstreams(custom)})
             if path == "/api/cache/stats":
-                return self._json(200, {"cache": self.app.store.config.get("cache", {}), "resolver": self.app.resolver.status()})
+                return self._json(
+                    200,
+                    {
+                        "cache": self.app.store.config.get("cache", {}),
+                        "l1_cache": self.app.gateway.cache.stats(),
+                        "resolver": self.app.resolver.status(),
+                    },
+                )
             if path == "/api/queries/export":
                 params = urllib.parse.parse_qs(parsed.query)
                 q = params.get("q", [""])[0].strip().lower()
@@ -837,6 +996,8 @@ class Handler(BaseHTTPRequestHandler):
 
             self._require(mutation=True)
 
+            if path == "/api/feeds/bundle":
+                return self._json(200, self.app.install_recommended_feeds())
             if path == "/api/upstreams/benchmark":
                 body = self._body()
                 domain_name = str(body.get("domain", "cloudflare.com")).strip() or "cloudflare.com"
@@ -848,6 +1009,7 @@ class Handler(BaseHTTPRequestHandler):
                 enable = bool(body.get("enabled", True))
                 res = self.app.store.toggle_preset(preset_id, enable)
                 self.app.policy.compile()
+                self.app.gateway.cache.clear()
                 return self._json(200, res)
             if path == "/api/logout":
                 token, _ = self._session()
@@ -883,10 +1045,12 @@ class Handler(BaseHTTPRequestHandler):
                     kind=str(body.get("kind", "exact")),
                 )
                 self.app.policy.compile()
+                self.app.gateway.cache.clear()
                 return self._json(200, res)
             if path == "/api/rules/clear_expired":
                 cleared = self.app.store.clear_expired_rules()
                 self.app.policy.compile()
+                self.app.gateway.cache.clear()
                 return self._json(200, {"ok": True, "cleared": cleared})
             if path == "/api/restore":
                 body = self._body()
@@ -897,11 +1061,12 @@ class Handler(BaseHTTPRequestHandler):
                     for r in body["rules"]:
                         if isinstance(r, dict) and r.get("pattern") and r["pattern"] not in existing:
                             try:
-                                raw_pattern = str(r.get("pattern", "")).lstrip("*.").rstrip(".")
-                                pattern = hostname(raw_pattern, "rule pattern")
+                                kind_val = str(r.get("kind", "exact"))
+                                raw_pattern = str(r.get("pattern", "")).strip()
+                                pattern = raw_pattern if kind_val == "regex" else hostname(raw_pattern.lstrip("*.").rstrip("."), "rule pattern")
                                 self.app.store.add_rule(
                                     pattern,
-                                    r.get("kind", "exact"),
+                                    kind_val,
                                     r.get("action", "deny"),
                                     str(r.get("value", "")),
                                     str(r.get("profile", "*")),
@@ -924,13 +1089,19 @@ class Handler(BaseHTTPRequestHandler):
                                 )
                             except Exception:
                                 pass
+                self.app.gateway.cache.clear()
                 self.app.store.audit("Backup restored", "Configuration, rules and feeds restored from backup")
                 return self._json(200, {"ok": True, "message": "Backup restored successfully"})
             if path == "/api/rules":
                 body = self._body()
-                raw_pattern = str(body.get("pattern", "")).lstrip("*.").rstrip(".")
-                pattern = hostname(raw_pattern, "rule pattern")
-                kind = body.get("kind", "exact")
+                kind = str(body.get("kind", "exact"))
+                raw_pattern = str(body.get("pattern", "")).strip()
+                if kind == "regex":
+                    if not raw_pattern:
+                        raise ValueError("Regex pattern is required")
+                    pattern = raw_pattern
+                else:
+                    pattern = hostname(raw_pattern.lstrip("*.").rstrip("."), "rule pattern")
                 action = body.get("action", "deny")
                 value = str(body.get("value", "")).strip()
                 profile = str(body.get("profile", "*"))
@@ -939,8 +1110,11 @@ class Handler(BaseHTTPRequestHandler):
                 if action == "rewrite":
                     value = str(ipaddress.ip_address(value))
                 expires = body.get("expires")
+                if body.get("ttl_seconds"):
+                    expires = time.time() + max(60, int(body["ttl_seconds"]))
                 row = self.app.store.add_rule(pattern, kind, action, value, profile, expires)
                 self.app.policy.compile()
+                self.app.gateway.cache.clear()
                 return self._json(201, row)
             if path == "/api/feeds":
                 body = self._body()
@@ -989,10 +1163,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(202, self.app.jobs.launch("cloudflare_sync", self.app.sync_cloudflare))
             if path == "/api/frp/restart":
                 return self._json(202, self.app.jobs.launch("frp_restart", self.app.frp.apply))
+            if path == "/api/cache/evict":
+                domain = str(body.get("domain", "")).strip()
+                removed = self.app.gateway.cache.evict(domain) if domain else 0
+                return self._json(200, {"ok": True, "evicted": removed, "domain": domain})
             if path == "/api/cache/flush":
+                l1_cleared = self.app.gateway.cache.clear()
                 result = self.app.resolver.control("flush_zone", ".")
-                self.app.store.audit("Resolver cache flushed")
-                return self._json(200, {"ok": True, "result": result})
+                self.app.store.audit("Resolver cache flushed", f"Cleared {l1_cleared} L1 cache entries")
+                return self._json(200, {"ok": True, "result": result, "l1_cleared": l1_cleared})
             if path == "/api/diagnostics/resolve":
                 body = self._body()
                 client = str(body.get("client", "127.0.0.1")).strip() or "127.0.0.1"
@@ -1013,6 +1192,7 @@ class Handler(BaseHTTPRequestHandler):
                 enable = bool(body.get("enabled", True))
                 res = self.app.store.toggle_preset(preset_id, enable)
                 self.app.policy.compile()
+                self.app.gateway.cache.clear()
                 return self._json(200, res)
             if path == "/api/config":
                 result = self.app.update_config(self._body())
@@ -1021,6 +1201,7 @@ class Handler(BaseHTTPRequestHandler):
                 feed_id = int(path.split("/")[3])
                 body = self._body()
                 self.app.feeds.set_enabled(feed_id, body.get("enabled") is True)
+                self.app.gateway.cache.clear()
                 return self._json(200, {"ok": True})
             self._json(404, {"error": "Not found"})
         except PermissionError as exc:
@@ -1041,10 +1222,12 @@ class Handler(BaseHTTPRequestHandler):
                 rule_id = int(path.rsplit("/", 1)[1])
                 self.app.store.delete_rule(rule_id)
                 self.app.policy.compile()
+                self.app.gateway.cache.clear()
                 return self._json(200, {"ok": True})
             if path.startswith("/api/feeds/"):
                 feed_id = int(path.rsplit("/", 1)[1])
                 self.app.feeds.delete(feed_id)
+                self.app.gateway.cache.clear()
                 return self._json(200, {"ok": True})
             self._json(404, {"error": "Not found"})
         except PermissionError as exc:
