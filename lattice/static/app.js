@@ -1,3 +1,9 @@
+function safeGetStorage(key) {
+  try { return window.localStorage ? window.safeGetStorage(key) : null; } catch (_) { return null; }
+}
+function safeSetStorage(key, val) {
+  try { if (window.localStorage) window.safeSetStorage(key, val); } catch (_) {}
+}
 const state = {
   csrf: "",
   authenticated: false,
@@ -13,6 +19,13 @@ const state = {
   version: "",
   livePolling: true,
   timeWindow: 86400,
+  chartMode: "volume",
+  catalog: [],
+  catalogFilter: "all",
+  presetGroup: "all",
+  activeDeviceIp: "",
+  sseSource: null,
+  liveRecent: [],
   snoozeTimer: null,
   snoozeRemaining: 0
 };
@@ -156,7 +169,8 @@ async function loadAll() {
     api("/api/rules"),
     api("/api/feeds"),
     api("/api/devices"),
-    api("/api/rules/presets")
+    api("/api/rules/presets"),
+    api("/api/feeds/catalog").catch(() => ({ catalog: [] }))
   ]);
   state.status = results[0];
   state.config = results[1].config;
@@ -165,6 +179,7 @@ async function loadAll() {
   state.feeds = results[3] || [];
   state.devices = results[4] || [];
   state.presets = results[5] || [];
+  state.catalog = (results[6] && results[6].catalog) || [];
   renderAll();
 }
 
@@ -200,6 +215,7 @@ function renderAll() {
   renderStatus();
   renderRules();
   renderFeeds();
+  renderCatalog();
   renderProtectionCategories();
   renderPresets();
   renderDnsForms();
@@ -340,6 +356,25 @@ function renderStatus() {
   $("#unique-domains").textContent = number(threat.unique_domains);
   $("#hour-queries").textContent = number(threat.queries);
 
+  if ($("#p50-latency")) $("#p50-latency").textContent = "P50: " + Number(dashboard.p50_latency || 0).toFixed(1) + " ms";
+  if ($("#p95-latency")) $("#p95-latency").textContent = "P95: " + Number(dashboard.p95_latency || 0).toFixed(1) + " ms";
+  if ($("#p99-latency")) $("#p99-latency").textContent = "P99: " + Number(dashboard.p99_latency || 0).toFixed(1) + " ms";
+
+  const dotMetrics = (s.dot && s.dot.metrics) || {};
+  const dotQ = Number(dotMetrics.dot_queries || 0);
+  const dohQ = Number(dotMetrics.doh_queries || 0);
+  if ($("#proto-dot-count")) $("#proto-dot-count").textContent = "DoT :853 — " + number(dotQ);
+  if ($("#proto-doh-count")) $("#proto-doh-count").textContent = "DoH :443 — " + number(dohQ);
+
+  const tlsPool = (s.dot && s.dot.tls_pool) || {};
+  if ($("#pool-hits-count")) $("#pool-hits-count").textContent = "Pool Hits: " + number(tlsPool.pool_hits || 0);
+  if ($("#prefetch-count")) $("#prefetch-count").textContent = "Prefetches: " + number(l1.prefetches || 0);
+  if ($("#sec-blocks-count")) $("#sec-blocks-count").textContent = number(dashboard.security_blocks_window || 0) + " security/focus blocks";
+
+  if (Array.isArray(dashboard.recent_live) && dashboard.recent_live.length) {
+    state.liveRecent = dashboard.recent_live.slice(0, 8);
+  }
+
   renderChart(dashboard.series || []);
   renderHealth(s.upstreams || []);
   renderSetupGuide();
@@ -348,6 +383,19 @@ function renderStatus() {
   renderDGA(threat);
   updateSnoozeUI(s.pause_blocking);
   renderSchedule(s.schedule, s.schedule_active);
+  const sysInfo = s.system_info || {};
+  if ($("#sys-db-size")) {
+    $("#sys-db-size").textContent = (sysInfo.db_size_mb >= 1)
+      ? Number(sysInfo.db_size_mb).toFixed(2) + " MB"
+      : Number(sysInfo.db_size_kb || 0).toFixed(1) + " KB";
+  }
+  if ($("#sys-queries-count")) $("#sys-queries-count").textContent = number(sysInfo.total_queries_stored || 0);
+  if ($("#sys-feed-domains-count")) $("#sys-feed-domains-count").textContent = number(sysInfo.total_feed_domains || 0);
+  if ($("#sys-devices-count")) $("#sys-devices-count").textContent = number(sysInfo.total_devices || 0);
+
+  renderSecurityShields(s.security_shields || state.config);
+  renderLivePulse(state.liveRecent);
+  ensureSSEStream();
 }
 
 function updateSnoozeUI(status) {
@@ -498,6 +546,7 @@ function renderTopDomains(dashboard) {
               "</div>" +
               svgBar(pct, "good") +
             "</div>" +
+            '<button type="button" class="btn-mini-action dev-insights-btn" data-ip="' + escapeHtml(item.client) + '">Insights</button>' +
           "</div>"
         );
       }).join("");
@@ -621,10 +670,65 @@ function renderChart(series) {
   const padRight = 18;
   const chartWidth = width - padLeft - padRight;
   const chartHeight = height - padTop - padBottom;
-  const max = Math.max(4, ...series.map(item => Number(item.total || 0)));
+  const mode = state.chartMode || "volume";
+  const mappedSeries = series.map(item => {
+    const tot = Number(item.total || 0);
+    const blk = Number(item.blocked || 0);
+    const alw = Math.max(0, tot - blk);
+    const rate = tot > 0 ? Number(((blk / tot) * 100).toFixed(1)) : 0;
+    return {
+      bucket: item.bucket,
+      total: tot,
+      blocked: blk,
+      allowed: alw,
+      primary: mode === "block_rate" ? rate : (mode === "split" ? alw : tot),
+      secondary: mode === "block_rate" ? 0 : blk
+    };
+  });
+
+  const max = mode === "block_rate"
+    ? 100
+    : Math.max(4, ...mappedSeries.map(item => Math.max(item.primary, item.secondary)));
+
+  const legendEl = $("#chart-legend");
+  if (legendEl) {
+    if (mode === "block_rate") {
+      legendEl.innerHTML = '<span><i class="legend-dot blocked"></i>Block Ratio (%)</span>';
+    } else if (mode === "split") {
+      legendEl.innerHTML = '<span><i class="legend-dot total"></i>Allowed Queries</span><span><i class="legend-dot blocked"></i>Blocked Threats</span>';
+    } else {
+      legendEl.innerHTML = '<span><i class="legend-dot total"></i>Total Queries</span><span><i class="legend-dot blocked"></i>Blocked Threats</span>';
+    }
+  }
+
+  // Update Chart Summary Bar
+  let peakBucket = mappedSeries[0] || { bucket: 0, total: 0 };
+  let sumTotal = 0;
+  mappedSeries.forEach(b => {
+    sumTotal += b.total;
+    if (b.total >= peakBucket.total) peakBucket = b;
+  });
+  if ($("#chart-peak-label")) {
+    if (peakBucket && peakBucket.bucket && peakBucket.total > 0) {
+      const pd = new Date(Number(peakBucket.bucket) * 1000);
+      const pt = String(pd.getHours()).padStart(2, "0") + ":" + String(pd.getMinutes()).padStart(2, "0");
+      $("#chart-peak-label").textContent = pt + " (" + number(peakBucket.total) + " q)";
+    } else {
+      $("#chart-peak-label").textContent = "—";
+    }
+  }
+  if ($("#chart-avg-label")) {
+    const avg = mappedSeries.length ? Math.round(sumTotal / mappedSeries.length) : 0;
+    $("#chart-avg-label").textContent = number(avg) + " queries";
+  }
+  if ($("#chart-cache-label")) {
+    const dash = (state.status && state.status.dashboard) || {};
+    const l1 = (state.status && state.status.l1_cache) || {};
+    $("#chart-cache-label").textContent = number(dash.cache_hits_window || l1.hits || 0);
+  }
 
   const getCoord = (val, idx) => {
-    const x = series.length === 1 ? padLeft + chartWidth / 2 : padLeft + (idx * chartWidth) / (series.length - 1);
+    const x = mappedSeries.length === 1 ? padLeft + chartWidth / 2 : padLeft + (idx * chartWidth) / (mappedSeries.length - 1);
     const y = height - padBottom - (Number(val || 0) / max) * chartHeight;
     return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), val: Number(val || 0) };
   };
@@ -632,15 +736,15 @@ function renderChart(series) {
   let grid = "";
   for (let i = 0; i <= 4; i++) {
     const y = padTop + (chartHeight / 4) * i;
-    const scaleVal = Math.round(max * (1 - i / 4));
+    const scaleVal = Math.round(max * (1 - i / 4)) + (mode === "block_rate" ? "%" : "");
     grid += '<line class="chart-grid" x1="' + padLeft + '" x2="' + (width - padRight) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '"></line>';
     if (i === 0 || i === 2 || i === 4) {
       grid += '<text class="chart-axis-label" x="' + (padLeft - 8) + '" y="' + (y + 3.5).toFixed(1) + '" text-anchor="end">' + scaleVal + '</text>';
     }
   }
 
-  let totalPoints = series.map((s, i) => getCoord(s.total, i));
-  let blockedPoints = series.map((s, i) => getCoord(s.blocked, i));
+  let totalPoints = mappedSeries.map((s, i) => getCoord(s.primary, i));
+  let blockedPoints = mappedSeries.map((s, i) => getCoord(s.secondary, i));
   if (series.length === 1) {
     totalPoints = [{ x: padLeft, y: totalPoints[0].y, val: totalPoints[0].val }, { x: width - padRight, y: totalPoints[0].y, val: totalPoints[0].val }];
     blockedPoints = [{ x: padLeft, y: blockedPoints[0].y, val: blockedPoints[0].val }, { x: width - padRight, y: blockedPoints[0].y, val: blockedPoints[0].val }];
@@ -760,6 +864,7 @@ function renderSchedule(sched, isActive) {
   const enabledInput = $("#sched-enabled");
   const startInput = $("#sched-start");
   const endInput = $("#sched-end");
+  const profSelect = $("#sched-profile");
   if (enabledInput && document.activeElement !== enabledInput) {
     enabledInput.checked = Boolean(sched.enabled);
   }
@@ -769,18 +874,122 @@ function renderSchedule(sched, isActive) {
   if (endInput && document.activeElement !== endInput) {
     endInput.value = sched.end || "07:00";
   }
-  if (badge) {
-    if (!sched.enabled) {
-      badge.className = "badge info";
-      badge.textContent = "Standby";
-    } else if (isActive) {
-      badge.className = "badge blocked";
-      badge.textContent = "Active Window (" + sched.start + "–" + sched.end + ")";
-    } else {
-      badge.className = "badge allowed";
-      badge.textContent = "Armed (" + sched.start + "–" + sched.end + ")";
-    }
+  if (profSelect && document.activeElement !== profSelect) {
+    profSelect.value = sched.profile || "*";
   }
+  const activeDays = new Set(Array.isArray(sched.days) ? sched.days : ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  $$("#sched-days-pills .day-pill").forEach(btn => {
+    btn.classList.toggle("active", activeDays.has(btn.dataset.day));
+  });
+
+  const statusText = !sched.enabled
+    ? "Standby"
+    : (isActive ? "Active Window (" + sched.start + "–" + sched.end + ")" : "Armed (" + sched.start + "–" + sched.end + ")");
+  const statusClass = !sched.enabled ? "badge info" : (isActive ? "badge blocked" : "badge allowed");
+
+  if (badge) {
+    badge.className = statusClass;
+    badge.textContent = statusText;
+  }
+  if ($("#dash-schedule-pill")) {
+    $("#dash-schedule-pill").className = statusClass;
+    $("#dash-schedule-pill").textContent = statusText;
+  }
+  if ($("#dash-schedule-summary")) {
+    const daysLabel = activeDays.size === 7 ? "Every day" : Array.from(activeDays).map(d => d.toUpperCase()).join(", ");
+    const profLabel = profileName(sched.profile || "*");
+    $("#dash-schedule-summary").textContent = sched.enabled
+      ? (sched.mode || "curfew").toUpperCase() + " • " + sched.start + "–" + sched.end + " • " + daysLabel + " • " + profLabel
+      : "Standby — Click Configure to set Bedtime Curfew or Deep Work hours";
+  }
+}
+
+function renderSecurityShields(shields) {
+  if (!shields) return;
+  const keys = ["dnssec", "rebinding_protection", "block_doh_canary", "safesearch", "block_risky_tlds", "block_punycode"];
+  let activeCount = 0;
+  keys.forEach(k => {
+    const on = k === "rebinding_protection" || k === "block_doh_canary" || k === "dnssec"
+      ? shields[k] !== false
+      : Boolean(shields[k]);
+    if (on) activeCount += 1;
+    const tile = $('#dash-shields-grid .shield-tile[data-shield="' + k + '"]');
+    if (tile) {
+      tile.classList.toggle("active", on);
+      const pill = tile.querySelector(".shield-pill");
+      if (pill) pill.textContent = on ? "ON" : "OFF";
+    }
+  });
+  if ($("#active-shields-badge")) {
+    $("#active-shields-badge").textContent = activeCount + "/6 Shields";
+    $("#active-shields-badge").className = "badge " + (activeCount >= 3 ? "info" : "warn");
+  }
+  const secScore = (state.status && state.status.security_score) || null;
+  if ($("#security-score-badge") && secScore) {
+    $("#security-score-badge").textContent = "Grade " + (secScore.grade || "A") + " • " + (secScore.score || 90) + "/100";
+    $("#security-score-badge").className = "badge " + ((secScore.score || 0) >= 85 ? "allowed" : "warn");
+    $("#security-score-badge").title = (secScore.breakdown || []).join(" | ");
+  }
+}
+
+function renderLivePulse(items) {
+  const container = $("#dash-live-list");
+  if (!container) return;
+  if (!items || !items.length) {
+    container.innerHTML = '<div class="empty-state">No recent DNS queries recorded yet.</div>';
+    return;
+  }
+  container.innerHTML = items.slice(0, 7).map(q => {
+    const qtypeLabel = QTYPE_NAMES[q.qtype] || ("TYPE" + q.qtype);
+    const isBlocked = q.action === "blocked" || q.action === "refused";
+    const badgeTone = q.action === "allowed" ? "allowed" : (q.action === "rewritten" ? "info" : "blocked");
+    const clientLabel = q.device_name ? (q.device_name + " (" + q.client + ")") : q.client;
+    const quickAction = isBlocked ? "quick-allow" : "quick-block";
+    const quickLabel = isBlocked ? "Allow" : "Block";
+    return (
+      '<div class="live-pulse-row">' +
+        '<div class="live-pulse-main">' +
+          '<div class="live-pulse-domain-line">' +
+            '<span class="badge ' + badgeTone + '">' + escapeHtml(friendlyAction(q.action)) + '</span>' +
+            '<span class="live-pulse-domain" title="' + escapeHtml(q.domain) + '">' + escapeHtml(q.domain || ".") + '</span>' +
+          '</div>' +
+          '<div class="live-pulse-meta">' +
+            '<span class="code-pill">' + escapeHtml(qtypeLabel) + '</span>' +
+            '<span>' + escapeHtml(clientLabel || "127.0.0.1") + '</span>' +
+            '<span>• ' + Number(q.latency || 0).toFixed(1) + ' ms</span>' +
+            (q.detail ? '<span>• ' + escapeHtml(q.detail) + '</span>' : "") +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="btn-mini-action" data-action="' + quickAction + '" data-domain="' + escapeHtml(q.domain) + '">' + quickLabel + '</button>' +
+      '</div>'
+    );
+  }).join("");
+}
+
+function ensureSSEStream() {
+  if (!state.authenticated || !state.livePolling) return;
+  if (state.sseTimer) return;
+  state.sseTimer = setTimeout(async () => {
+    state.sseTimer = null;
+    if (!state.authenticated || !state.livePolling) return;
+    try {
+      const res = await api("/api/events?since=" + Number(state.lastEventSeq || 0));
+      if (res && res.seq != null) state.lastEventSeq = res.seq;
+      const evs = (res && res.events) || [];
+      if (evs.length) {
+        const reversed = evs.slice().reverse();
+        const seen = new Set();
+        const combined = reversed.concat(state.liveRecent || []).filter(item => {
+          const key = (item.seq || item.id || "") + ":" + item.ts + ":" + item.domain;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        state.liveRecent = combined.slice(0, 8);
+        renderLivePulse(state.liveRecent);
+      }
+    } catch (_) {}
+  }, 2500);
 }
 
 function renderL1CacheEntries(entries) {
@@ -868,16 +1077,23 @@ function fillProfiles() {
   ).join("");
   if ($("#rule-profile")) $("#rule-profile").innerHTML = options;
   if ($("#bulk-rules-profile")) $("#bulk-rules-profile").innerHTML = options;
+  if ($("#sched-profile")) {
+    const prev = (state.status && state.status.schedule && state.status.schedule.profile) || $("#sched-profile").value || "*";
+    $("#sched-profile").innerHTML = options;
+    $("#sched-profile").value = prev;
+  }
 }
 
 async function loadQueries() {
   const q = ($("#query-search") ? $("#query-search").value : "").trim().toLowerCase();
   const filter = $("#query-filter") ? $("#query-filter").value : "all";
   const qtype = $("#query-qtype-filter") ? $("#query-qtype-filter").value : "0";
+  const rcode = $("#query-rcode-filter") ? $("#query-rcode-filter").value : "all";
   let url = "/api/queries?limit=300";
   if (q) url += "&q=" + encodeURIComponent(q);
   if (filter && filter !== "all") url += "&action=" + encodeURIComponent(filter);
   if (qtype && qtype !== "0") url += "&qtype=" + encodeURIComponent(qtype);
+  if (rcode && rcode !== "all") url += "&rcode=" + encodeURIComponent(rcode);
 
   state.queries = await api(url);
   renderQueries();
@@ -887,8 +1103,10 @@ function renderQueries() {
   const search = ($("#query-search") ? $("#query-search").value : "").trim().toLowerCase();
   const filter = $("#query-filter") ? $("#query-filter").value : "all";
   const qtypeFilter = $("#query-qtype-filter") ? Number($("#query-qtype-filter").value) : 0;
+  const rcodeFilter = $("#query-rcode-filter") ? $("#query-rcode-filter").value : "all";
 
   const rows = (state.queries || []).filter(row => {
+    if (rcodeFilter !== "all" && Number(row.rcode) !== Number(rcodeFilter)) return false;
     if (
       search &&
       !String(row.domain || "").toLowerCase().includes(search) &&
@@ -1028,12 +1246,166 @@ function renderProtectionCategories() {
   ).join("");
 }
 
+function renderCatalog() {
+  const grid = $("#catalog-grid");
+  if (!grid) return;
+  const catalog = state.catalog || [];
+  const installedCount = catalog.filter(c => c.installed).length;
+  if ($("#catalog-installed-badge")) {
+    $("#catalog-installed-badge").textContent = installedCount + "/" + (catalog.length || 18) + " Installed";
+    $("#catalog-installed-badge").className = "badge " + (installedCount > 0 ? "allowed" : "info");
+  }
+  const catFilter = state.catalogFilter || "all";
+  const filtered = catalog.filter(item => {
+    if (catFilter === "all") return true;
+    if (catFilter === "family_social") return item.category === "adult" || item.category === "social" || item.category === "custom";
+    return item.category === catFilter;
+  });
+  if (!filtered.length) {
+    grid.innerHTML = '<div class="empty-state">No blocklists match this category filter.</div>';
+    return;
+  }
+  grid.innerHTML = filtered.map(item => {
+    const inst = Boolean(item.installed);
+    const catTone = item.category === "malware" ? "blocked" : (item.category === "tracking" ? "warn" : "info");
+    return (
+      '<div class="catalog-card ' + (inst ? "installed" : "") + '">' +
+        '<div class="catalog-card-top">' +
+          '<div class="catalog-title-row">' +
+            "<strong>" + escapeHtml(item.name) + "</strong>" +
+            '<span class="badge ' + (inst ? "allowed" : catTone) + '">' + (inst ? "Installed" : escapeHtml(item.category)) + "</span>" +
+          "</div>" +
+          '<div class="catalog-badges">' +
+            '<span class="code-pill">' + escapeHtml(item.scale || "") + "</span>" +
+            '<span class="code-pill">' + escapeHtml(item.format || "domains") + "</span>" +
+          "</div>" +
+          '<p class="catalog-desc">' + escapeHtml(item.description || "") + "</p>" +
+        "</div>" +
+        '<div class="catalog-card-foot">' +
+          '<small class="muted">' + (inst && item.domain_count ? number(item.domain_count) + " active domains" : "Verified HTTPS feed") + "</small>" +
+          (inst
+            ? '<button type="button" class="btn-mini-action catalog-remove-btn" data-feed-id="' + item.feed_id + '" data-name="' + escapeHtml(item.name) + '">Remove</button>'
+            : '<button type="button" class="button primary catalog-install-btn" data-id="' + escapeHtml(item.id) + '">+ Enable List</button>') +
+        "</div>" +
+      "</div>"
+    );
+  }).join("");
+
+  $$(".catalog-install-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const cid = btn.dataset.id;
+      try {
+        btn.disabled = true;
+        btn.textContent = "Adding...";
+        const res = await api("/api/feeds/catalog", { method: "POST", body: { feed_id: cid } });
+        state.catalog = res.catalog || state.catalog;
+        state.feeds = res.feeds || (await api("/api/feeds"));
+        renderCatalog();
+        renderFeeds();
+        toast("Blocklist added and syncing in background");
+      } catch (err) {
+        toast(err.message, true);
+        btn.disabled = false;
+        btn.textContent = "+ Enable List";
+      }
+    });
+  });
+
+  $$(".catalog-remove-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const fid = btn.dataset.feedId;
+      if (!fid) return;
+      try {
+        btn.disabled = true;
+        await api("/api/feeds/" + fid, { method: "DELETE" });
+        const [feeds, catRes, status] = await Promise.all([
+          api("/api/feeds"),
+          api("/api/feeds/catalog"),
+          api("/api/status?window=" + state.timeWindow)
+        ]);
+        state.feeds = feeds || [];
+        state.catalog = (catRes && catRes.catalog) || [];
+        state.status = status;
+        renderCatalog();
+        renderFeeds();
+        renderStatus();
+        toast("Removed " + (btn.dataset.name || "blocklist"));
+      } catch (err) {
+        toast(err.message, true);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+async function openDeviceInsights(ip) {
+  if (!ip) return;
+  state.activeDeviceIp = ip;
+  const modal = $("#device-insights-modal");
+  const scrim = $("#device-insights-scrim");
+  if (!modal || !scrim) return;
+  modal.classList.remove("hidden");
+  scrim.classList.remove("hidden");
+  $("#dev-insights-badge").textContent = ip;
+  $("#dev-insights-title").textContent = "Loading Device Telemetry...";
+  try {
+    const data = await api("/api/devices/insights?ip=" + encodeURIComponent(ip) + "&window=" + state.timeWindow);
+    $("#dev-insights-title").textContent = data.name ? (data.name + " Telemetry") : ("Client " + ip);
+    $("#dev-kpi-total").textContent = number(data.total || 0);
+    $("#dev-kpi-blockrate").textContent = Number(data.block_rate_pct || 0).toFixed(1) + "%";
+    $("#dev-kpi-latency").textContent = Number(data.avg_latency || 0).toFixed(1) + " ms";
+    $("#dev-kpi-profile").textContent = profileName(data.profile || "*");
+    const curMode = data.mode || "normal";
+    $$(".dev-mode-action-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === curMode));
+    if ($("#dev-mode-status-text")) {
+      $("#dev-mode-status-text").textContent = curMode === "bypass"
+        ? "Bypass Active — Policy filtering temporarily disabled for this device"
+        : (curMode === "quarantine"
+            ? "Quarantine Active — All non-essential DNS lookups blocked for this device"
+            : "Standard Policy — Following assigned profile rules");
+    }
+
+    const renderMiniList = (el, rows, actionType) => {
+      if (!el) return;
+      if (!rows || !rows.length) {
+        el.innerHTML = '<div class="empty-state">No domains recorded in this window.</div>';
+        return;
+      }
+      el.innerHTML = rows.map(r =>
+        '<div class="live-pulse-row">' +
+          '<div class="live-pulse-main">' +
+            '<span class="live-pulse-domain">' + escapeHtml(r.domain) + '</span>' +
+            '<small class="muted">' + number(r.count) + ' lookups</small>' +
+          '</div>' +
+          '<button type="button" class="btn-mini-action" data-action="' + (actionType === "allow" ? "quick-block" : "quick-allow") + '" data-domain="' + escapeHtml(r.domain) + '">' + (actionType === "allow" ? "Block" : "Allow") + '</button>' +
+        '</div>'
+      ).join("");
+    };
+    renderMiniList($("#dev-top-allowed"), data.top_allowed || [], "allow");
+    renderMiniList($("#dev-top-blocked"), data.top_blocked || [], "block");
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function closeDeviceInsights() {
+  $("#device-insights-modal")?.classList.add("hidden");
+  $("#device-insights-scrim")?.classList.add("hidden");
+}
+
 function renderPresets() {
   const grid = $("#presets-grid");
   if (!grid) return;
-  const presets = state.presets || [];
+  const allPresets = state.presets || [];
+  const blockedTotal = allPresets.filter(p => p.blocked).length;
+  if ($("#presets-active-badge")) {
+    $("#presets-active-badge").textContent = blockedTotal + "/" + (allPresets.length || 20) + " Blocked";
+    $("#presets-active-badge").className = "badge " + (blockedTotal > 0 ? "blocked" : "info");
+  }
+  const grp = state.presetGroup || "all";
+  const presets = allPresets.filter(p => grp === "all" || (p.group || "social") === grp);
   if (!presets.length) {
-    grid.innerHTML = '<div class="empty-state">No service presets available.</div>';
+    grid.innerHTML = '<div class="empty-state">No service presets in this category.</div>';
     return;
   }
   grid.innerHTML = presets.map(p => {
@@ -1227,7 +1599,10 @@ function renderDevices() {
 
     return (
       '<tr data-dev-row="' + idx + '">' +
-        '<td><span class="code-pill">' + escapeHtml(dev.ip) + "</span></td>" +
+        '<td><span class="code-pill">' + escapeHtml(dev.ip) + "</span>" +
+          ((/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(dev.ip) || /^10\.(8|66|0)\./.test(dev.ip)) ? ' <span class="badge info">VPN</span>' : "") +
+          (dev.mode === "bypass" ? ' <span class="badge warn">Bypass</span>' : (dev.mode === "quarantine" ? ' <span class="badge blocked">Quarantine</span>' : "")) +
+        "</td>" +
         '<td><input class="dev-name" data-ip="' + escapeHtml(dev.ip) + '" value="' + escapeHtml(dev.name || "") + '" placeholder="e.g. Living Room TV"></td>' +
         '<td><select class="dev-icon" data-ip="' + escapeHtml(dev.ip) + '">' +
           '<option value="phone" ' + (dev.icon === "phone" ? "selected" : "") + ">Phone</option>" +
@@ -1241,6 +1616,7 @@ function renderDevices() {
         "<td>" + ago(dev.last_seen) + "</td>" +
         '<td class="cell-right">' +
           '<div class="button-row">' +
+            '<button type="button" class="btn-mini-action dev-insights-btn" data-ip="' + escapeHtml(dev.ip) + '">Insights</button>' +
             '<button type="button" class="btn-mini-action logs-dev-btn" data-ip="' + escapeHtml(dev.ip) + '">Logs</button>' +
             '<button type="button" class="btn-mini-action save-dev-btn" data-ip="' + escapeHtml(dev.ip) + '">Save</button>' +
             '<button type="button" class="btn-mini-action del-dev-btn" data-ip="' + escapeHtml(dev.ip) + '">×</button>' +
@@ -1329,9 +1705,15 @@ function renderDnsForms() {
   $("#dnssec-toggle").checked = Boolean(cfg.dnssec);
   if ($("#safesearch-toggle")) $("#safesearch-toggle").checked = Boolean(cfg.safesearch);
   if ($("#rebind-toggle")) $("#rebind-toggle").checked = cfg.rebinding_protection !== false;
+  if ($("#doh-canary-toggle")) $("#doh-canary-toggle").checked = cfg.block_doh_canary !== false;
+  if ($("#risky-tld-toggle")) $("#risky-tld-toggle").checked = Boolean(cfg.block_risky_tlds);
+  if ($("#punycode-toggle")) $("#punycode-toggle").checked = Boolean(cfg.block_punycode);
+  if ($("#doh-enabled-toggle")) $("#doh-enabled-toggle").checked = cfg.doh_enabled !== false;
   $("#prefetch-toggle").checked = Boolean(cfg.cache && cfg.cache.prefetch);
   $("#stale-toggle").checked = Boolean(cfg.cache && cfg.cache.serve_expired);
   $("#block-response").value = cfg.block_response || "nxdomain";
+  if ($("#block-custom-ip")) $("#block-custom-ip").value = cfg.block_custom_ip || "";
+  if ($("#block-ttl")) $("#block-ttl").value = cfg.block_ttl || 30;
   renderUpstreamEditor();
   renderLocalRecordsEditor();
   renderRouteEditor();
@@ -1556,6 +1938,32 @@ function renderSystemForm() {
   $("#config-editor").value = JSON.stringify(cfg, null, 2);
 }
 
+async function loadVpnDoctor() {
+  const grid = $("#vpn-doctor-grid");
+  const badge = $("#vpn-doctor-badge");
+  if (!grid) return;
+  try {
+    const res = await api("/api/diagnostics/vpn");
+    if (badge) {
+      badge.className = "badge " + (res.ready ? "allowed" : "warn");
+      badge.textContent = res.ready
+        ? "VPN Continuity Ready (" + res.passed + "/" + res.total + " Active)"
+        : res.passed + "/" + res.total + " Active";
+    }
+    grid.innerHTML = (res.checks || []).map(c =>
+      `<div class="doctor-item ${c.ok ? "ok" : "warn"}">` +
+        `<div class="doctor-item-head">` +
+          `<span class="doctor-item-title">${escapeHtml(c.title)}</span>` +
+          `<span class="badge ${c.ok ? "allowed" : "warn"}">${c.ok ? "ACTIVE" : "ACTION"}</span>` +
+        `</div>` +
+        `<div class="doctor-item-detail">${escapeHtml(c.detail || "")}</div>` +
+      `</div>`
+    ).join("");
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-state">${escapeHtml(err.message)}</div>`;
+  }
+}
+
 async function loadAndroidDoctor() {
   const grid = $("#android-doctor-grid");
   const badge = $("#android-doctor-badge");
@@ -1635,7 +2043,7 @@ function switchPage(target) {
   closeQueryDrawer();
 
   if (target === "queries") loadQueries().catch(err => toast(err.message, true));
-  if (target === "private") { loadAndroidDoctor(); loadQrCode("doh"); }
+  if (target === "private") { loadAndroidDoctor(); loadVpnDoctor(); loadQrCode("doh"); }
   if (target === "system") loadAudit();
 }
 
@@ -1651,13 +2059,13 @@ function closeMobileNav() {
 
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("lattice_theme", theme);
+  safeSetStorage("lattice_theme", theme);
 }
 
 /* ==================== ONE-TIME EVENT BINDINGS ==================== */
 
 function bindEvents() {
-  const savedTheme = localStorage.getItem("lattice_theme") || "dark";
+  const savedTheme = safeGetStorage("lattice_theme") || "dark";
   setTheme(savedTheme === "light" ? "light" : "dark");
 
   $("#theme-toggle")?.addEventListener("click", () => {
@@ -1802,6 +2210,7 @@ function bindEvents() {
   });
   $("#query-filter")?.addEventListener("change", () => loadQueries().catch(() => {}));
   $("#query-qtype-filter")?.addEventListener("change", () => loadQueries().catch(() => {}));
+  $("#query-rcode-filter")?.addEventListener("change", () => loadQueries().catch(() => {}));
 
   $("#query-live-toggle")?.addEventListener("click", () => {
     state.livePolling = !state.livePolling;
@@ -1884,6 +2293,294 @@ function bindEvents() {
         btn.textContent = "1-Click Recommended Bundle (4 Lists)";
       }
     }
+  });
+
+  // Delegated Device Telemetry Insights button
+  document.addEventListener("click", (e) => {
+    const insBtn = e.target.closest(".dev-insights-btn");
+    if (insBtn && insBtn.dataset.ip) {
+      openDeviceInsights(insBtn.dataset.ip);
+    }
+  });
+  $$(".dev-mode-action-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const ip = state.activeDeviceIp;
+      if (!ip) return;
+      const mode = btn.dataset.mode || "normal";
+      const seconds = Number(btn.dataset.sec || 0);
+      try {
+        await api("/api/devices/mode", { method: "POST", body: { ip, mode, seconds } });
+        toast("Device " + ip + " set to " + mode.toUpperCase() + " mode");
+        await openDeviceInsights(ip);
+        state.devices = await api("/api/devices");
+        renderDevices();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  });
+
+  $("#test-rule-btn")?.addEventListener("click", async () => {
+    const pat = ($("#rule-pattern")?.value || "").trim();
+    const box = $("#rule-test-result");
+    if (!box) return;
+    if (!pat) {
+      toast("Enter a domain or regex pattern first", true);
+      return;
+    }
+    let kind = $("#rule-kind")?.value || "suffix";
+    if (kind !== "regex" && $("#rule-subdomains") && !$("#rule-subdomains").checked) {
+      kind = "exact";
+    }
+    box.classList.remove("hidden");
+    try {
+      const res = await api("/api/rules/test", { method: "POST", body: { pattern: pat, kind, sample: pat.replace(/^\^|\$$/g, "") } });
+      const hits = res.matched_recent_domains || [];
+      box.innerHTML =
+        `<div class="detail-line"><span>Pattern Valid (${escapeHtml(res.kind)})</span><strong>${hits.length} recent query matches</strong></div>` +
+        (hits.length
+          ? `<small class="muted">Matched in log: ${escapeHtml(hits.slice(0, 6).join(", "))}</small>`
+          : `<small class="muted">Syntax valid — ready to save rule.</small>`);
+    } catch (err) {
+      box.innerHTML = `<span class="text-red">${escapeHtml(err.message)}</span>`;
+    }
+  });
+
+  $$(".template-profile-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.config.profiles = state.config.profiles || [];
+      const pid = btn.dataset.id;
+      if (state.config.profiles.some(p => p.id === pid)) {
+        toast(btn.dataset.name + " is already in your profile list");
+        return;
+      }
+      state.config.profiles.push({
+        id: pid,
+        name: btn.dataset.name,
+        networks: [btn.dataset.net || "192.168.50.0/24"],
+        categories: (btn.dataset.cats || "ads,tracking,malware").split(","),
+        rate_limit: 300,
+        logging: true
+      });
+      renderProfilesEditor();
+      toast("Added " + btn.dataset.name + " — click Save Profiles to activate");
+    });
+  });
+
+  $("#vacuum-db-btn")?.addEventListener("click", async () => {
+    const btn = $("#vacuum-db-btn");
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Optimizing...";
+      }
+      const res = await api("/api/system/vacuum", { method: "POST", body: {} });
+      await refreshStatus();
+      toast("SQLite WAL database checkpointed & optimized (" + Math.round((res.after_bytes || 0) / 1024) + " KB)");
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Optimize & Checkpoint DB";
+      }
+    }
+  });
+
+  $("#run-batch-diag-btn")?.addEventListener("click", async () => {
+    const box = $("#batch-diag-results");
+    if (!box) return;
+    const client = ($("#diag-client")?.value || "127.0.0.1").trim() || "127.0.0.1";
+    const testDomains = [
+      "connectivitycheck.gstatic.com",
+      "use-application-dns.net",
+      "www.google.com",
+      "ads.doubleclick.net",
+      "www.tiktok.com",
+      "xn--80ak6aa92e.com",
+      "quarterly-invoice.zip",
+      "api.github.com"
+    ];
+    box.classList.remove("hidden");
+    box.innerHTML = '<div class="empty-state">Running 8-domain security policy audit...</div>';
+    try {
+      const res = await api("/api/diagnose/batch", { method: "POST", body: { client, domains: testDomains } });
+      const rows = res.results || [];
+      box.innerHTML =
+        '<table class="data-table"><thead><tr><th>Test Domain</th><th>Verdict</th><th>Matched Policy / Shield</th><th>Client Profile</th></tr></thead><tbody>' +
+        rows.map(r => {
+          const tone = r.action === "allow" ? "allowed" : (r.action === "rewrite" ? "info" : "blocked");
+          return (
+            "<tr>" +
+              '<td class="domain">' + escapeHtml(r.domain) + "</td>" +
+              '<td><span class="badge ' + tone + '">' + escapeHtml(r.action.toUpperCase()) + "</span></td>" +
+              '<td><span class="code-pill">' + escapeHtml(r.source + (r.value ? " -> " + r.value : "")) + "</span></td>" +
+              "<td>" + escapeHtml(r.profile) + "</td>" +
+            "</tr>"
+          );
+        }).join("") +
+        "</tbody></table>";
+      toast("Completed 8-domain security policy self-test");
+    } catch (err) {
+      box.innerHTML = '<div class="empty-state">' + escapeHtml(err.message) + '</div>';
+    }
+  });
+
+  $("#dev-insights-close")?.addEventListener("click", closeDeviceInsights);
+  $("#device-insights-scrim")?.addEventListener("click", closeDeviceInsights);
+  $("#dev-insights-logs-btn")?.addEventListener("click", () => {
+    const ip = state.activeDeviceIp;
+    closeDeviceInsights();
+    if (ip) {
+      switchPage("queries");
+      if ($("#query-search")) {
+        $("#query-search").value = ip;
+        loadQueries().catch(() => {});
+      }
+    }
+  });
+
+  // Curated Blocklist Marketplace Category Filters & 1-Click Packs
+  $$(".catalog-filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $$(".catalog-filter-btn").forEach(b => b.classList.toggle("active", b === btn));
+      state.catalogFilter = btn.dataset.cat || "all";
+      renderCatalog();
+    });
+  });
+
+  $$(".catalog-pack-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const pack = btn.dataset.pack || "core";
+      const origText = btn.textContent;
+      try {
+        btn.disabled = true;
+        btn.textContent = "Installing Pack...";
+        const res = await api("/api/feeds/catalog", { method: "POST", body: { pack } });
+        state.catalog = res.catalog || state.catalog;
+        state.feeds = res.feeds || (await api("/api/feeds"));
+        renderCatalog();
+        renderFeeds();
+        toast("Installed " + (res.added || 0) + " new lists from " + origText + " (" + (res.target_count || 0) + " total in pack)");
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    });
+  });
+
+  // Preset Group Filter & Bulk Toggle
+  $$(".preset-group-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $$(".preset-group-btn").forEach(b => b.classList.toggle("active", b === btn));
+      state.presetGroup = btn.dataset.group || "all";
+      renderPresets();
+    });
+  });
+
+  const handleBulkPresets = async (enable) => {
+    try {
+      const grp = state.presetGroup || "all";
+      const res = await api("/api/rules/presets/bulk", { method: "POST", body: { enabled: enable, group: grp } });
+      state.presets = res.presets || (await api("/api/rules/presets"));
+      state.rules = await api("/api/rules");
+      renderPresets();
+      renderRules();
+      toast((enable ? "Blocked " : "Unblocked ") + (grp === "all" ? "all 20 presets" : grp + " presets"));
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+  $("#presets-block-group-btn")?.addEventListener("click", () => handleBulkPresets(true));
+  $("#presets-allow-group-btn")?.addEventListener("click", () => handleBulkPresets(false));
+
+  // Instant Cross-Blocklist, Rule & Preset Attribution Lookup
+  const runBlocklistSearch = async () => {
+    const q = ($("#blocklist-search-input")?.value || "").trim();
+    const box = $("#blocklist-search-results");
+    const clearBtn = $("#blocklist-search-clear");
+    if (!box) return;
+    if (!q) {
+      box.classList.add("hidden");
+      clearBtn?.classList.add("hidden");
+      return;
+    }
+    clearBtn?.classList.remove("hidden");
+    box.classList.remove("hidden");
+    box.innerHTML = '<div class="muted">Searching indexed blocklists, custom rules, and 20 service presets...</div>';
+    try {
+      const res = await api("/api/feeds/search?q=" + encodeURIComponent(q));
+      const parts = [];
+      (res.preset_matches || []).forEach(p => {
+        parts.push(
+          '<div class="live-pulse-row">' +
+            '<div class="live-pulse-main">' +
+              '<div class="live-pulse-domain-line"><span class="badge info">Preset</span><strong>' + escapeHtml(p.name) + '</strong></div>' +
+              '<small class="muted">Matched domains: ' + escapeHtml((p.matched_domains || []).join(", ")) + '</small>' +
+            '</div>' +
+          '</div>'
+        );
+      });
+      (res.rule_matches || []).forEach(r => {
+        parts.push(
+          '<div class="live-pulse-row">' +
+            '<div class="live-pulse-main">' +
+              '<div class="live-pulse-domain-line"><span class="badge ' + (r.action === "allow" ? "allowed" : "blocked") + '">Rule (' + escapeHtml(r.action) + ')</span><strong>' + escapeHtml(r.pattern) + '</strong></div>' +
+              '<small class="muted">Scope: ' + escapeHtml(r.kind) + ' • Profile: ' + escapeHtml(r.profile) + '</small>' +
+            '</div>' +
+          '</div>'
+        );
+      });
+      (res.feed_matches || []).forEach(f => {
+        parts.push(
+          '<div class="live-pulse-row">' +
+            '<div class="live-pulse-main">' +
+              '<div class="live-pulse-domain-line"><span class="badge blocked">Feed: ' + escapeHtml(f.feed_name) + '</span><strong>' + escapeHtml(f.domain) + '</strong></div>' +
+              '<small class="muted">Category: ' + escapeHtml(f.category) + '</small>' +
+            '</div>' +
+            '<button type="button" class="btn-mini-action" data-action="quick-allow" data-domain="' + escapeHtml(f.domain) + '">Whitelist</button>' +
+          '</div>'
+        );
+      });
+      (res.catalog_matches || []).forEach(c => {
+        parts.push(
+          '<div class="live-pulse-row">' +
+            '<div class="live-pulse-main">' +
+              '<div class="live-pulse-domain-line"><span class="badge allowed">Marketplace Feed</span><strong>' + escapeHtml(c.name) + ' (' + escapeHtml(c.scale) + ')</strong></div>' +
+              '<small class="muted">' + escapeHtml(c.url) + '</small>' +
+            '</div>' +
+          '</div>'
+        );
+      });
+      if (!parts.length) {
+        box.innerHTML =
+          '<div class="live-pulse-row">' +
+            '<div class="live-pulse-main"><strong>No blocklist or preset matches for "' + escapeHtml(q) + '"</strong><small class="muted">You can block or whitelist this domain directly as a custom rule.</small></div>' +
+            '<div class="button-row">' +
+              '<button type="button" class="btn-mini-action" data-action="quick-block" data-domain="' + escapeHtml(q) + '">Block Domain</button>' +
+              '<button type="button" class="btn-mini-action" data-action="quick-allow" data-domain="' + escapeHtml(q) + '">Allow Domain</button>' +
+            '</div>' +
+          '</div>';
+      } else {
+        box.innerHTML = parts.slice(0, 12).join("");
+      }
+    } catch (err) {
+      box.innerHTML = '<div class="empty-state">' + escapeHtml(err.message) + '</div>';
+    }
+  };
+  $("#blocklist-search-btn")?.addEventListener("click", runBlocklistSearch);
+  $("#blocklist-search-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runBlocklistSearch();
+    }
+  });
+  $("#blocklist-search-clear")?.addEventListener("click", () => {
+    if ($("#blocklist-search-input")) $("#blocklist-search-input").value = "";
+    $("#blocklist-search-results")?.classList.add("hidden");
+    $("#blocklist-search-clear")?.classList.add("hidden");
   });
 
   // Curated Blocklist Quick-Fill
@@ -2013,6 +2710,7 @@ function bindEvents() {
       toast("Imported " + res.added + " rules (" + res.skipped + " skipped)");
       $("#bulk-rules-input").value = "";
       closeBulkModal();
+      closeDeviceInsights();
       await refreshRulesAndPresets();
     } catch (err) {
       toast(err.message, true);
@@ -2183,9 +2881,15 @@ function bindEvents() {
       cfg.dnssec = $("#dnssec-toggle").checked;
       if ($("#safesearch-toggle")) cfg.safesearch = $("#safesearch-toggle").checked;
       if ($("#rebind-toggle")) cfg.rebinding_protection = $("#rebind-toggle").checked;
+      if ($("#doh-canary-toggle")) cfg.block_doh_canary = $("#doh-canary-toggle").checked;
+      if ($("#risky-tld-toggle")) cfg.block_risky_tlds = $("#risky-tld-toggle").checked;
+      if ($("#punycode-toggle")) cfg.block_punycode = $("#punycode-toggle").checked;
+      if ($("#doh-enabled-toggle")) cfg.doh_enabled = $("#doh-enabled-toggle").checked;
       cfg.cache.prefetch = $("#prefetch-toggle").checked;
       cfg.cache.serve_expired = $("#stale-toggle").checked;
       cfg.block_response = $("#block-response").value;
+      if ($("#block-custom-ip")) cfg.block_custom_ip = $("#block-custom-ip").value.trim();
+      if ($("#block-ttl")) cfg.block_ttl = Number($("#block-ttl").value || 30);
       await saveConfig(cfg, {}, "DNS settings validated and applied");
     } catch (error) {
       toast(error.message, true);
@@ -2287,6 +2991,25 @@ function bindEvents() {
       await loadAndroidDoctor();
     } catch (error) {
       toast(error.message, true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  $("#run-vpn-doctor")?.addEventListener("click", async () => {
+    await loadVpnDoctor();
+    toast("Verified 6 VPN & roaming continuity safeguards");
+  });
+
+  $("#dash-reconnect-upstreams-btn")?.addEventListener("click", async () => {
+    const btn = $("#dash-reconnect-upstreams-btn");
+    try {
+      if (btn) btn.disabled = true;
+      await api("/api/upstreams/reconnect", { method: "POST", body: {} });
+      await refreshStatus();
+      toast("Upstream TLS pool reset & resolver cache refreshed");
+    } catch (err) {
+      toast(err.message, true);
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -2435,14 +3158,79 @@ function bindEvents() {
     }
   });
 
-  // Scheduled Curfew & Deep Focus Engine
+  // Chart Mode Switcher (Volume / Block % / Allow vs Block)
+  $$(".chart-mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $$(".chart-mode-btn").forEach(b => b.classList.toggle("active", b === btn));
+      state.chartMode = btn.dataset.chartMode || "volume";
+      const series = (state.status && state.status.dashboard && state.status.dashboard.series) || [];
+      renderChart(series);
+    });
+  });
+
+  // Dashboard 1-Click Security Shield Toggles
+  $$("#dash-shields-grid .shield-tile").forEach(tile => {
+    tile.addEventListener("click", async () => {
+      const key = tile.dataset.shield;
+      if (!key) return;
+      const nextVal = !tile.classList.contains("active");
+      try {
+        tile.disabled = true;
+        const res = await api("/api/security/shields", { method: "POST", body: { [key]: nextVal } });
+        if (res.config) state.config = res.config;
+        if (state.status && res.security_shields) state.status.security_shields = res.security_shields;
+        renderSecurityShields(res.security_shields || state.config);
+        renderDnsForms();
+        toast((nextVal ? "Enabled " : "Disabled ") + (tile.querySelector("strong")?.textContent || key));
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        tile.disabled = false;
+      }
+    });
+  });
+
+  $("#dash-jump-schedule-btn")?.addEventListener("click", () => {
+    switchPage("blocking");
+    const rulesTabBtn = $('.subnav-item[data-block-tab="rules"]');
+    if (rulesTabBtn) rulesTabBtn.click();
+    setTimeout(() => $("#schedule-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  });
+
+  // Scheduled Curfew & Deep Focus Engine (with Day-of-Week & Profile support)
   let selectedSchedMode = "bedtime";
+  const collectSelectedDays = () => {
+    const active = $$("#sched-days-pills .day-pill.active").map(b => b.dataset.day);
+    return active.length ? active : ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  };
+
+  $$("#sched-days-pills .day-pill").forEach(pill => {
+    pill.addEventListener("click", () => {
+      pill.classList.toggle("active");
+    });
+  });
+
+  $$(".sched-day-preset").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const targetDays = new Set((btn.dataset.days || "").split(","));
+      $$("#sched-days-pills .day-pill").forEach(pill => {
+        pill.classList.toggle("active", targetDays.has(pill.dataset.day));
+      });
+    });
+  });
+
   $$(".sched-preset-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
       selectedSchedMode = btn.dataset.mode || "bedtime";
       if ($("#sched-start")) $("#sched-start").value = btn.dataset.start || "22:00";
       if ($("#sched-end")) $("#sched-end").value = btn.dataset.end || "07:00";
       if ($("#sched-enabled")) $("#sched-enabled").checked = true;
+      if (selectedSchedMode === "focus") {
+        const wk = new Set(["mon", "tue", "wed", "thu", "fri"]);
+        $$("#sched-days-pills .day-pill").forEach(p => p.classList.toggle("active", wk.has(p.dataset.day)));
+      } else {
+        $$("#sched-days-pills .day-pill").forEach(p => p.classList.add("active"));
+      }
       try {
         const res = await api("/api/schedule", {
           method: "POST",
@@ -2450,7 +3238,9 @@ function bindEvents() {
             enabled: true,
             mode: selectedSchedMode,
             start: $("#sched-start").value,
-            end: $("#sched-end").value
+            end: $("#sched-end").value,
+            days: collectSelectedDays(),
+            profile: $("#sched-profile")?.value || "*"
           }
         });
         renderSchedule(res.schedule, res.active);
@@ -2469,7 +3259,9 @@ function bindEvents() {
           enabled: Boolean($("#sched-enabled")?.checked),
           mode: selectedSchedMode,
           start: $("#sched-start")?.value || "22:00",
-          end: $("#sched-end")?.value || "07:00"
+          end: $("#sched-end")?.value || "07:00",
+          days: collectSelectedDays(),
+          profile: $("#sched-profile")?.value || "*"
         }
       });
       renderSchedule(res.schedule, res.active);
@@ -2482,7 +3274,7 @@ function bindEvents() {
   $("#sched-enabled")?.addEventListener("change", saveScheduleFromUI);
 
   // Collapsible Onboarding Checklist
-  if (localStorage.getItem("lattice_setup_collapsed") === "1") {
+  if (safeGetStorage("lattice_setup_collapsed") === "1") {
     $("#setup-guide")?.classList.add("collapsed");
     if ($("#toggle-setup-guide-btn")) $("#toggle-setup-guide-btn").textContent = "Expand";
   }
@@ -2492,7 +3284,7 @@ function bindEvents() {
     if (!guide || !btn) return;
     const collapsed = guide.classList.toggle("collapsed");
     btn.textContent = collapsed ? "Expand" : "Collapse";
-    localStorage.setItem("lattice_setup_collapsed", collapsed ? "1" : "0");
+    safeSetStorage("lattice_setup_collapsed", collapsed ? "1" : "0");
   });
 
   // QR Provisioning Mode Pills

@@ -3326,3 +3326,470 @@ td .code-pill,
     width: 100%;
   }
 }
+
+/* ==================== V8.0.0-GEMINI-APEX EXECUTIVE DASHBOARD & CONTROLS ==================== */
+
+.telemetry-ribbon {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.telemetry-ribbon-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+}
+
+.telemetry-ribbon-item:last-child {
+  border-right: 0;
+  padding-right: 0;
+}
+
+.ribbon-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.ribbon-values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-controls-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.chart-mode-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.chart-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.chart-mode-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.chart-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.chart-summary-bar strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.shields-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.shield-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.16s ease;
+  min-width: 0;
+}
+
+.shield-tile:hover {
+  border-color: var(--primary);
+}
+
+.shield-tile.active {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.36);
+}
+
+.shield-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.shield-tile-top strong {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.shield-tile small {
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.shield-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.shield-tile.active .shield-pill {
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--green);
+}
+
+.dash-schedule-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.dash-schedule-bar strong {
+  display: block;
+  font-size: 0.85rem;
+}
+
+.dash-schedule-bar small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.live-pulse-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+
+.live-pulse-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.live-pulse-domain-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.live-pulse-domain {
+  font-weight: 600;
+  font-size: 0.84rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-pulse-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.73rem;
+  color: var(--muted);
+}
+
+.sched-days-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.sched-days-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sched-day-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sched-days-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.day-pill {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.day-pill.active {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+@media (max-width: 1040px) {
+  .telemetry-ribbon {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .telemetry-ribbon-item:nth-child(2) {
+    border-right: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .telemetry-ribbon {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px 12px;
+  }
+  .telemetry-ribbon-item {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding-right: 0;
+    padding-bottom: 8px;
+  }
+  .telemetry-ribbon-item:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .shields-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ==================== V9.0.0-GEMINI-OMNI BLOCKLIST MARKETPLACE & INSIGHTS ==================== */
+
+.lookup-bar-card {
+  padding: 14px 18px;
+}
+
+.lookup-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lookup-bar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lookup-bar-copy strong {
+  font-size: 0.9rem;
+}
+
+.lookup-bar-copy small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.lookup-bar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 320px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.lookup-bar-controls .compact-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.lookup-results-box {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.catalog-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.catalog-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  min-width: 0;
+  transition: border-color 0.15s ease;
+}
+
+.catalog-card.installed {
+  border-color: rgba(16, 185, 129, 0.42);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.catalog-card-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.catalog-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.catalog-title-row strong {
+  font-size: 0.88rem;
+  line-height: 1.3;
+}
+
+.catalog-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.catalog-desc {
+  font-size: 0.77rem;
+  color: var(--muted);
+  line-height: 1.38;
+  margin: 0;
+}
+
+.catalog-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.dev-insights-lists {
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 1100px) {
+  .catalog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .catalog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lookup-bar-controls {
+    flex-basis: 100%;
+    justify-content: stretch;
+  }
+  .lookup-bar-controls .button {
+    flex: 1 1 auto;
+  }
+}
+
+/* ==================== V10.0.0-GEMINI-ZENITH ENHANCEMENTS ==================== */
+
+.dev-mode-bar {
+  margin-bottom: 12px;
+}
+
+.dev-mode-action-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+}

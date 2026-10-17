@@ -18,21 +18,53 @@ from .store import PRESETS
 GOOGLE_SEARCH_RE = re.compile(r"^(?:www\.)?google\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2}|ca|de|fr|it|es|nl|pl|jp|kr|in|au|br|mx)$")
 
 ANDROID_ESSENTIAL_EXACT = {
+    # Android AOSP / Google Pixel / Chrome connectivity & Private DNS probes
     "connectivitycheck.gstatic.com",
     "connectivitycheck.android.com",
+    "www.gstatic.com",
+    "ssl.gstatic.com",
+    "metric.gstatic.com",
+    "dnsotls-ds.metric.gstatic.com",
+    "android.clients.google.com",
+    "clients1.google.com",
+    "clients2.google.com",
     "clients3.google.com",
     "clients4.google.com",
+    "clients5.google.com",
+    "clients6.google.com",
+    # Xiaomi / Redmi / POCO (MIUI & HyperOS) VPN & Wi-Fi captive portal probes
+    "connect.rom.miui.com",
+    # Huawei / Honor EMUI & HarmonyOS connectivity probes
+    "connectivitycheck.platform.hicloud.com",
+    # Oppo / Realme / OnePlus (ColorOS & OxygenOS) connectivity probes
+    "conn1.oppomobile.com",
+    "conn2.oppomobile.com",
+    # Vivo (FuntouchOS / OriginOS) connectivity probes
+    "wifi.vivo.com.cn",
+    # Apple iOS / iPadOS / macOS captive portal probes
+    "captive.apple.com",
+    "www.appleiphonecell.com",
+    "gspe1-ssl.ls.apple.com",
+    # Cloudflare WARP / 1.1.1.1 & Mozilla Firefox connectivity probes
+    "cp.cloudflare.com",
+    "connectivity.cloudflareclient.com",
+    "engage.cloudflareclient.com",
+    "detectportal.firefox.com",
+    # Microsoft Windows NCSI & Linux NetworkManager probes
     "dns.msftncsi.com",
     "www.msftncsi.com",
+    "msftconnecttest.com",
     "www.msftconnecttest.com",
+    "nmcheck.gnome.org",
+    "network-test.debian.org",
+    # RFC 7050 / RFC 9462 DDR & NAT64 discovery
     "ipv4only.arpa",
     "_dns.resolver.arpa",
-    "dnsotls-ds.metric.gstatic.com",
 }
 
 
 def is_android_essential(name: str, configured_hostname: str = "") -> bool:
-    """Return True if domain is required for Android Private DNS validation or captive portal connectivity."""
+    """Return True if domain is required for Android/iOS/OEM Private DNS validation or VPN captive portal checks."""
     clean = name.strip().lower().rstrip(".")
     if not clean:
         return False
@@ -40,7 +72,7 @@ def is_android_essential(name: str, configured_hostname: str = "") -> bool:
         return True
     if clean in ANDROID_ESSENTIAL_EXACT:
         return True
-    if clean.endswith(".dnsotls-ds.metric.gstatic.com"):
+    if clean.endswith((".dnsotls-ds.metric.gstatic.com", ".metric.gstatic.com")):
         return True
     return False
 
@@ -130,16 +162,16 @@ class Policy:
             else:
                 rules[(row["profile"], row["kind"], row["pattern"])] = row
 
-        bloom = Bloom()
-        count = 0
         with self.store.lock:
             query = (
                 "SELECT DISTINCT fd.domain FROM feed_domains fd "
                 "JOIN feeds f ON f.id=fd.feed_id WHERE f.enabled=1"
             )
-            for row in self.store.db.execute(query):
-                bloom.add(row["domain"])
-                count += 1
+            raw_domains = [row[0] for row in self.store.db.execute(query).fetchall()]
+        bloom = Bloom()
+        for dom in raw_domains:
+            bloom.add(dom)
+        count = len(raw_domains)
 
         with self.lock:
             self.profile_networks = networks
@@ -239,6 +271,11 @@ class Policy:
         profile = self.profile(client)
         if not name:
             return Decision("allow", "policy:root", profile["id"])
+        dev_mode = self.store.get_device_mode(client)
+        if dev_mode == "bypass":
+            return Decision("allow", "policy:device-bypass", profile["id"])
+        if dev_mode == "quarantine" and not is_android_essential(name, self.store.config.get("hostname", "")):
+            return Decision("deny", "policy:device-quarantine", profile["id"])
         row = self._rule(profile["id"], name)
         if row:
             rule_label = f"rule:{row['id']} ({row['pattern']})"
@@ -250,15 +287,26 @@ class Policy:
                 return Decision(row["action"], rule_label, profile["id"], row["value"])
         if self.store.is_blocking_paused():
             return Decision("allow", "policy:snoozed", profile["id"])
-        if self.store.config.get("safesearch", False):
+        cfg = self.store.config
+        if not is_android_essential(name, cfg.get("hostname", "")):
+            if cfg.get("block_doh_canary", True) and name in ("use-application-dns.net", "_DoH-canary.invalid"):
+                return Decision("deny", "security:doh-canary", profile["id"])
+            if cfg.get("block_punycode", False) and (name.startswith("xn--") or ".xn--" in name):
+                return Decision("deny", "security:punycode-homograph", profile["id"])
+            if cfg.get("block_risky_tlds", False) and "." in name:
+                tld = name.rsplit(".", 1)[-1]
+                if tld in {"zip", "mov", "top", "gq", "tk", "cf", "ml", "ga"}:
+                    return Decision("deny", f"security:risky-tld (.{tld})", profile["id"])
+
+        if cfg.get("safesearch", False):
             ss = get_safesearch_rewrite(name)
             if ss:
                 target_ip, engine = ss
                 return Decision("rewrite", engine, profile["id"], target_ip)
 
         active_categories = list(profile["categories"])
-        sched_active, sched = self.store.is_schedule_active()
-        if sched_active and sched.get("profile", "*") in ("*", profile["id"]):
+        sched_active, sched = self.store.is_schedule_active(profile=profile["id"])
+        if sched_active:
             if not is_android_essential(name, self.store.config.get("hostname", "")):
                 parents_set = set(self.parents(name))
                 for preset_id in sched.get("presets", []):
@@ -294,11 +342,7 @@ IGNORE_FEED_DOMAINS = {
     "ip6-localhost",
     "ip6-loopback",
     "0.0.0.0",
-    "connectivitycheck.gstatic.com",
-    "connectivitycheck.android.com",
-    "dnsotls-ds.metric.gstatic.com",
-    "ipv4only.arpa",
-    "_dns.resolver.arpa",
+    *ANDROID_ESSENTIAL_EXACT,
 }
 
 

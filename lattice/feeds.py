@@ -1,11 +1,14 @@
-"""Safe subscription download, parsing and atomic activation."""
+"""Safe subscription download, gzip streaming, parallel sync, and atomic activation."""
 from __future__ import annotations
 
+import concurrent.futures
+import gzip
 import ipaddress
 import socket
 import time
 import urllib.parse
 import urllib.request
+import zlib
 from typing import Any
 
 from .policy import parse_feed_line
@@ -74,28 +77,72 @@ class FeedManager:
         self.store.audit("Subscription toggled", f"{feed_id}:{enabled}")
 
     def _download(self, url: str) -> list[str]:
-        request = urllib.request.Request(url, headers={"User-Agent": "LatticeDNS/0.1"})
-        domains: set[str] = set()
-        total = 0
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "LatticeDNS/12.0 (+https://github.com/ntun7719/research)",
+                "Accept-Encoding": "gzip, deflate",
+            },
+        )
+        buf = bytearray()
+        content_encoding = ""
         with urllib.request.urlopen(request, timeout=45) as response:
             final_url = response.geturl()
             if final_url != url:
                 validate_url(final_url)
+            if hasattr(response, "headers") and response.headers:
+                content_encoding = str(response.headers.get("Content-Encoding", "")).lower().strip()
             while True:
-                chunk = response.read(1024 * 1024)
+                chunk = response.read(512 * 1024)
                 if not chunk:
                     break
-                total += len(chunk)
-                if total > MAX_BYTES:
+                buf.extend(chunk)
+                if len(buf) > MAX_BYTES:
                     raise ValueError("Feed exceeds the 64 MiB safety limit")
-                if total == len(chunk):
-                    buffer = chunk
-                else:
-                    buffer += chunk
-        text = buffer.decode("utf-8", "replace") if total else ""
+        raw_bytes = bytes(buf)
+        if not raw_bytes:
+            return []
+        if content_encoding == "gzip" or raw_bytes[:2] == b"\x1f\x8b":
+            raw_bytes = gzip.decompress(raw_bytes)
+            if len(raw_bytes) > MAX_BYTES * 2:
+                raise ValueError("Decompressed feed exceeds safety limit")
+        elif content_encoding == "deflate":
+            try:
+                raw_bytes = zlib.decompress(raw_bytes)
+            except zlib.error:
+                raw_bytes = zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
+        text = raw_bytes.decode("utf-8", "replace")
         return text.splitlines()
 
-    def refresh_one(self, feed_id: int) -> dict[str, Any]:
+    def _parse_lines(self, lines: list[str], fmt: str) -> set[str]:
+        parsed: set[str] = set()
+        for line in lines:
+            domain = parse_feed_line(line, fmt)
+            if domain:
+                parsed.add(domain)
+                if len(parsed) > MAX_DOMAINS:
+                    raise ValueError("Feed exceeds the 3 million domain safety limit")
+        if not parsed:
+            raise ValueError("Feed produced no valid domains")
+        return parsed
+
+    def _commit_parsed(self, feed: dict[str, Any], parsed: set[str]) -> None:
+        feed_id = feed["id"]
+        with self.store.lock, self.store.db:
+            self.store.db.execute("CREATE TEMP TABLE IF NOT EXISTS stage_feed(domain TEXT PRIMARY KEY)")
+            self.store.db.execute("DELETE FROM stage_feed")
+            self.store.db.executemany("INSERT OR IGNORE INTO stage_feed(domain) VALUES(?)", ((d,) for d in parsed))
+            self.store.db.execute("DELETE FROM feed_domains WHERE feed_id=?", (feed_id,))
+            self.store.db.execute(
+                "INSERT INTO feed_domains(feed_id,category,domain) SELECT ?,?,domain FROM stage_feed",
+                (feed_id, feed["category"]),
+            )
+            self.store.db.execute(
+                "UPDATE feeds SET refreshed=?,domain_count=?,error='' WHERE id=?",
+                (time.time(), len(parsed), feed_id),
+            )
+
+    def refresh_one(self, feed_id: int, recompile: bool = True) -> dict[str, Any]:
         with self.store.lock:
             row = self.store.db.execute("SELECT * FROM feeds WHERE id=?", (feed_id,)).fetchone()
         if not row:
@@ -106,29 +153,10 @@ class FeedManager:
         try:
             url = validate_url(feed["url"])
             lines = self._download(url)
-            parsed: set[str] = set()
-            for line in lines:
-                domain = parse_feed_line(line, feed["format"])
-                if domain:
-                    parsed.add(domain)
-                    if len(parsed) > MAX_DOMAINS:
-                        raise ValueError("Feed exceeds the 3 million domain safety limit")
-            if not parsed:
-                raise ValueError("Feed produced no valid domains")
-            with self.store.lock, self.store.db:
-                self.store.db.execute("CREATE TEMP TABLE IF NOT EXISTS stage_feed(domain TEXT PRIMARY KEY)")
-                self.store.db.execute("DELETE FROM stage_feed")
-                self.store.db.executemany("INSERT OR IGNORE INTO stage_feed(domain) VALUES(?)", ((d,) for d in parsed))
-                self.store.db.execute("DELETE FROM feed_domains WHERE feed_id=?", (feed_id,))
-                self.store.db.execute(
-                    "INSERT INTO feed_domains(feed_id,category,domain) SELECT ?,?,domain FROM stage_feed",
-                    (feed_id, feed["category"]),
-                )
-                self.store.db.execute(
-                    "UPDATE feeds SET refreshed=?,domain_count=?,error='' WHERE id=?",
-                    (time.time(), len(parsed), feed_id),
-                )
-            self.policy.compile()
+            parsed = self._parse_lines(lines, feed["format"])
+            self._commit_parsed(feed, parsed)
+            if recompile:
+                self.policy.compile()
             self.store.audit("Subscription refreshed", f"{feed['name']}:{len(parsed)}")
         except Exception as exc:
             with self.store.lock, self.store.db:
@@ -139,12 +167,38 @@ class FeedManager:
         return dict(refreshed)
 
     def refresh_all(self) -> list[dict[str, Any]]:
-        output = []
-        for feed in self.list():
-            if not feed["enabled"]:
-                continue
+        enabled_feeds = [f for f in self.list() if f["enabled"]]
+        if not enabled_feeds:
+            return []
+
+        def fetch_and_parse(feed: dict[str, Any]) -> tuple[dict[str, Any], set[str] | None, str]:
             try:
-                output.append(self.refresh_one(feed["id"]))
+                url = validate_url(feed["url"])
+                lines = self._download(url)
+                parsed = self._parse_lines(lines, feed["format"])
+                return feed, parsed, ""
             except Exception as exc:
-                output.append({"id": feed["id"], "name": feed["name"], "error": str(exc)})
+                return feed, None, str(exc)
+
+        output: list[dict[str, Any]] = []
+        any_updated = False
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(enabled_feeds))) as pool:
+            for feed, parsed, err in pool.map(fetch_and_parse, enabled_feeds):
+                if parsed is not None:
+                    try:
+                        self._commit_parsed(feed, parsed)
+                        any_updated = True
+                        self.store.audit("Subscription refreshed", f"{feed['name']}:{len(parsed)}")
+                        with self.store.lock:
+                            refreshed = self.store.db.execute("SELECT * FROM feeds WHERE id=?", (feed["id"],)).fetchone()
+                        output.append(dict(refreshed))
+                    except Exception as exc:
+                        output.append({"id": feed["id"], "name": feed["name"], "error": str(exc)})
+                else:
+                    with self.store.lock, self.store.db:
+                        self.store.db.execute("UPDATE feeds SET error=? WHERE id=?", (err[:500], feed["id"]))
+                    output.append({"id": feed["id"], "name": feed["name"], "error": err})
+
+        if any_updated:
+            self.policy.compile()
         return output

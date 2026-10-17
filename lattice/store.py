@@ -47,61 +47,73 @@ def shannon_entropy(text: str) -> float:
 PRESETS: dict[str, dict[str, Any]] = {
     "tiktok": {
         "name": "TikTok & ByteDance",
+        "group": "social",
         "description": "Short-form video app, CDN nodes, and telemetry endpoints",
         "domains": ["tiktok.com", "tiktokcdn.com", "byteoversea.com", "ibytedtos.com", "musical.ly", "tiktokv.com"],
     },
     "meta": {
         "name": "Meta Social Suite",
+        "group": "social",
         "description": "Facebook, Instagram, Threads, WhatsApp, and Meta graph beacons",
         "domains": ["facebook.com", "fbcdn.net", "instagram.com", "cdninstagram.com", "threads.net", "whatsapp.com", "meta.com"],
     },
     "youtube": {
         "name": "YouTube & Video Delivery",
+        "group": "streaming",
         "description": "YouTube web, mobile APIs, Shorts, and Google video streaming CDNs",
         "domains": ["youtube.com", "googlevideo.com", "ytimg.com", "youtu.be", "youtubei.googleapis.com", "youtube-nocookie.com"],
     },
     "discord": {
         "name": "Discord Voice & Chat",
+        "group": "social",
         "description": "Discord messaging client, media attachments, and voice gateway servers",
         "domains": ["discord.com", "discordapp.com", "discordapp.net", "discord.gg", "discord.media", "discordcdn.com"],
     },
     "twitter": {
         "name": "X (Twitter) & Media",
+        "group": "social",
         "description": "X/Twitter timeline, API endpoints, t.co shortlinks, and video/image CDNs",
         "domains": ["twitter.com", "x.com", "twimg.com", "t.co", "vine.co", "periscope.tv"],
     },
     "snapchat": {
         "name": "Snapchat & Bitmoji",
+        "group": "social",
         "description": "Snapchat messaging, Spotlight media delivery, and Bitmoji avatars",
         "domains": ["snapchat.com", "sc-cdn.net", "snap-dev.net", "bitmoji.com", "snapads.com"],
     },
     "netflix": {
         "name": "Netflix Streaming",
+        "group": "streaming",
         "description": "Netflix video streaming, OpenConnect CDNs, and Fast.com probes",
         "domains": ["netflix.com", "nflxvideo.net", "nflximg.net", "nflxso.net", "nflxext.com", "fast.com"],
     },
     "reddit": {
         "name": "Reddit & Media",
+        "group": "social",
         "description": "Reddit forums, mobile APIs, redd.it media hosts, and analytics",
         "domains": ["reddit.com", "redd.it", "redditmedia.com", "redditstatic.com", "redditinc.com"],
     },
     "gaming": {
         "name": "Gaming Platforms",
+        "group": "gaming_ai",
         "description": "Steam, Roblox, Epic Games, Battle.net, and Riot storefront/matchmaking",
         "domains": ["steampowered.com", "steamcommunity.com", "roblox.com", "rbxcdn.com", "epicgames.com", "riotgames.com", "battle.net"],
     },
     "ai_bots": {
         "name": "Generative AI Portals",
+        "group": "gaming_ai",
         "description": "ChatGPT, OpenAI API, Claude, Perplexity, and Character.AI web access",
         "domains": ["chatgpt.com", "openai.com", "oaistatic.com", "claude.ai", "anthropic.com", "perplexity.ai", "character.ai"],
     },
     "cryptominers": {
         "name": "Cryptocurrency Web Miners",
+        "group": "security",
         "description": "Browser-based coin mining scripts, Stratum pools, and cryptojacking relays",
         "domains": ["coinhive.com", "crypto-loot.com", "minergate.com", "coin-have.com", "jsecoin.com", "nanopool.org", "2miners.com"],
     },
     "telemetry": {
         "name": "OS, Mobile & Smart-TV Telemetry",
+        "group": "security",
         "description": "Windows, Samsung, Xiaomi, Roku, and LG ACR background telemetry beacons",
         "domains": [
             "v10.events.data.microsoft.com",
@@ -115,6 +127,78 @@ PRESETS: dict[str, dict[str, Any]] = {
             "scribe.logs.roku.com",
             "lgad.cjpowercast.com",
         ],
+    },
+    "telegram": {
+        "name": "Telegram Messenger & CDN",
+        "group": "social",
+        "description": "Telegram mobile/desktop messaging clients, t.me links, and media relays",
+        "domains": ["telegram.org", "t.me", "tdesktop.com", "telegra.ph", "telegram.me", "telesco.pe"],
+    },
+    "twitch": {
+        "name": "Twitch Live Streaming",
+        "group": "streaming",
+        "description": "Twitch live video channels, chat relays, and ttvnw video edge CDNs",
+        "domains": ["twitch.tv", "ttvnw.net", "jtvnw.net", "twitchcdn.net", "twitchsvc.net"],
+    },
+    "spotify": {
+        "name": "Spotify Music & Podcasts",
+        "group": "streaming",
+        "description": "Spotify audio streaming, desktop/mobile apps, and scdn media delivery",
+        "domains": ["spotify.com", "scdn.co", "spotifycdn.com", "pscdn.co", "spoti.fi"],
+    },
+    "disney_prime": {
+        "name": "Disney+ & Prime Video",
+        "group": "streaming",
+        "description": "Disney+, BAMGrid streaming infrastructure, and Amazon Prime Video CDNs",
+        "domains": ["disneyplus.com", "bamgrid.com", "dssott.com", "primevideo.com", "aiv-cdn.net"],
+    },
+    "pinterest": {
+        "name": "Pinterest & Visual Feed",
+        "group": "social",
+        "description": "Pinterest boards, pinimg image CDNs, and shortlinks",
+        "domains": ["pinterest.com", "pinimg.com", "pin.it", "pinterest.co.uk", "pinterest.de"],
+    },
+    "dating": {
+        "name": "Dating Apps (Tinder, Bumble, Hinge)",
+        "group": "adult_betting",
+        "description": "Tinder, Bumble, Hinge, Badoo, OkCupid, and Match mobile/web endpoints",
+        "domains": ["tinder.com", "gotinder.com", "bumble.com", "hinge.co", "badoo.com", "okcupid.com", "match.com"],
+    },
+    "gambling_bet": {
+        "name": "Online Betting & Casinos",
+        "group": "adult_betting",
+        "description": "Bet365, DraftKings, FanDuel, Stake, 1xBet, and online casino platforms",
+        "domains": ["bet365.com", "draftkings.com", "fanduel.com", "stake.com", "1xbet.com", "betway.com", "pokerstars.com"],
+    },
+    "doh_bypass": {
+        "name": "Public DoH Bypass Resolvers",
+        "group": "security",
+        "description": "Block third-party browser DoH endpoints so devices cannot bypass Lattice policies",
+        "domains": ["dns.google", "cloudflare-dns.com", "mozilla.cloudflare-dns.com", "doh.opendns.com", "dns.nextdns.io", "use-application-dns.net"],
+    },
+    "whatsapp": {
+        "name": "WhatsApp Messenger & Calls",
+        "group": "social",
+        "description": "WhatsApp messaging, voice/video calling relays, and media attachment servers",
+        "domains": ["whatsapp.com", "whatsapp.net", "wa.me", "whatsapp-plus.info"],
+    },
+    "signal": {
+        "name": "Signal Private Messenger",
+        "group": "social",
+        "description": "Signal desktop/mobile encrypted messaging, voice relays, and whispersystems CDNs",
+        "domains": ["signal.org", "whispersystems.org", "signal.art", "signal.link"],
+    },
+    "ebay_shopping": {
+        "name": "Temu, Shein & Flash Shopping",
+        "group": "adult_betting",
+        "description": "Temu, Shein, and AliExpress shopping apps, gamified promos, and ad-tracking CDNs",
+        "domains": ["temu.com", "kwcdn.com", "shein.com", "ltwebstatic.com", "aliexpress.com"],
+    },
+    "smart_tv_acr": {
+        "name": "Smart-TV ACR & Ad Overlays",
+        "group": "security",
+        "description": "Automatic Content Recognition (ACR) frame-grabbers on LG, Samsung, Roku, and Vizio TVs",
+        "domains": ["samsungads.com", "samsungacr.com", "lgad.cjpowercast.com", "ads.roku.com", "cognitivetv.com", "inscape.tv"],
     },
 }
 
@@ -142,6 +226,249 @@ RECOMMENDED_FEED_BUNDLE: list[dict[str, str]] = [
         "url": "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0&mimetype=plaintext",
         "category": "tracking",
         "format": "domains",
+    },
+]
+
+CURATED_BLOCKLIST_CATALOG: list[dict[str, Any]] = [
+    {
+        "id": "stevenblack_unified",
+        "name": "StevenBlack Unified Hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        "category": "ads",
+        "format": "domains",
+        "scale": "~130k domains",
+        "description": "Gold-standard consolidated hosts file merging adware, mobile ads, and mainstream tracker networks.",
+        "packs": ["core", "privacy"],
+    },
+    {
+        "id": "adguard_sdn",
+        "name": "AdGuard SDN DNS Filter",
+        "url": "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+        "category": "ads",
+        "format": "adblock",
+        "scale": "~65k rules",
+        "description": "AdGuard official DNS filter compiled from English, Mobile Ads, Spyware, and AdGuard Base lists.",
+        "packs": ["core", "privacy"],
+    },
+    {
+        "id": "oisd_small",
+        "name": "OISD Small (Zero-Breakage Core)",
+        "url": "https://small.oisd.nl/domainswild2",
+        "category": "ads",
+        "format": "domains",
+        "scale": "~70k domains",
+        "description": "Curated low-false-positive ad and tracker blocklist engineered so apps and websites never break.",
+        "packs": ["privacy", "family"],
+    },
+    {
+        "id": "oisd_big",
+        "name": "OISD Big (Full Spectrum Blocklist)",
+        "url": "https://big.oisd.nl/domainswild2",
+        "category": "ads",
+        "format": "domains",
+        "scale": "~280k domains",
+        "description": "Comprehensive OISD protection combining ads, trackers, telemetry, phishing, and scam networks.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "hagezi_pro",
+        "name": "HaGeZi Multi PRO Blocklist",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt",
+        "category": "ads",
+        "format": "domains",
+        "scale": "~240k domains",
+        "description": "Balanced multi-source broom cleaning ads, affiliate tracking, telemetry, scam, and malware domains.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "hagezi_tif",
+        "name": "HaGeZi Threat Intelligence Feeds (TIF)",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/tif.txt",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~450k domains",
+        "description": "High-coverage threat intelligence feed blocking active botnet C2, malware drops, and phishing hosts.",
+        "packs": ["malware"],
+    },
+    {
+        "id": "hagezi_native",
+        "name": "HaGeZi Native OS & Device Trackers",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/native.winoffice.txt",
+        "category": "tracking",
+        "format": "domains",
+        "scale": "~2k domains",
+        "description": "Blocks native background telemetry in Windows, Microsoft Office, and connected consumer devices.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "peter_lowe",
+        "name": "Peter Lowe Ad & Tracker Servers",
+        "url": "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0&mimetype=plaintext",
+        "category": "tracking",
+        "format": "domains",
+        "scale": "~3.6k domains",
+        "description": "Hand-maintained, zero-false-positive list of persistent advertising and user-tracking servers.",
+        "packs": ["core", "privacy"],
+    },
+    {
+        "id": "firebog_easyprivacy",
+        "name": "EasyPrivacy DNS Trackers (Firebog)",
+        "url": "https://v.firebog.net/hosts/Easyprivacy.txt",
+        "category": "tracking",
+        "format": "domains",
+        "scale": "~38k domains",
+        "description": "Parsed DNS hostfile from EasyPrivacy targeting web bugs, heatmaps, and fingerprinting scripts.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "frogeye_firstparty",
+        "name": "First-Party & CNAME Trackers (Frogeye)",
+        "url": "https://hostfiles.frogeye.fr/firstparty-trackers-hosts.txt",
+        "category": "tracking",
+        "format": "domains",
+        "scale": "~12k domains",
+        "description": "Targets disguised CNAME-cloaked trackers (Eulerian, Pardot, Criteo, Adobe) hiding on first-party domains.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "urlhaus_malware",
+        "name": "URLHaus Abuse.ch Malware Hostfile",
+        "url": "https://urlhaus.abuse.ch/downloads/hostfile/",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~15k domains",
+        "description": "Real-time feed from Abuse.ch URLHaus blocking sites actively distributing malware payloads.",
+        "packs": ["core", "malware", "family"],
+    },
+    {
+        "id": "phishing_army",
+        "name": "Phishing Army Extended Blocklist",
+        "url": "https://phishing.army/download/phishing_army_blocklist_extended.txt",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~140k domains",
+        "description": "Aggregated phishing intelligence feed from PhishTank, OpenPhish, and CertStream credential lures.",
+        "packs": ["malware", "family"],
+    },
+    {
+        "id": "dandelion_antimalware",
+        "name": "DandelionSprout Anti-Malware List",
+        "url": "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/Alternate%20versions%20Anti-Malware%20List/AntiMalwareDomains.txt",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~25k domains",
+        "description": "Curated protection against ransomware, fake software updaters, trojan droppers, and scam domains.",
+        "packs": ["malware"],
+    },
+    {
+        "id": "spam404_scams",
+        "name": "Spam404 Fraud & Tech-Scam Blacklist",
+        "url": "https://raw.githubusercontent.com/Spam404/lists/master/main-blacklist.txt",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~8k domains",
+        "description": "Blocks known financial fraud, deceptive popups, fake giveaway lures, and tech-support scams.",
+        "packs": ["malware"],
+    },
+    {
+        "id": "nocoin_miners",
+        "name": "NoCoin Browser Cryptomining Filter",
+        "url": "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/hosts.txt",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~1k domains",
+        "description": "Stops WebAssembly and JavaScript browser cryptojacking scripts and mining pool relays.",
+        "packs": ["malware"],
+    },
+    {
+        "id": "stevenblack_porn",
+        "name": "StevenBlack Adult & Pornography Hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts",
+        "category": "adult",
+        "format": "domains",
+        "scale": "~140k domains",
+        "description": "Dedicated adult content blocklist for family networks, schools, and parental-control profiles.",
+        "packs": ["family"],
+    },
+    {
+        "id": "stevenblack_gambling",
+        "name": "StevenBlack Gambling & Casino Hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/gambling-only/hosts",
+        "category": "custom",
+        "format": "domains",
+        "scale": "~15k domains",
+        "description": "Blocks online casinos, sportsbooks, betting exchanges, and lottery/wagering portals.",
+        "packs": ["family"],
+    },
+    {
+        "id": "stevenblack_social",
+        "name": "StevenBlack Social Networks Hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social-only/hosts",
+        "category": "social",
+        "format": "domains",
+        "scale": "~5k domains",
+        "description": "Comprehensive social media network hostfile for deep focus or restricted workplace environments.",
+        "packs": [],
+    },
+    {
+        "id": "hagezi_light",
+        "name": "HaGeZi Multi LIGHT Blocklist",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt",
+        "category": "ads",
+        "format": "domains",
+        "scale": "~90k domains",
+        "description": "Lightweight, ultra-safe baseline ad, tracking, and scam filter suitable for shared family routers.",
+        "packs": ["family"],
+    },
+    {
+        "id": "hagezi_ultimate",
+        "name": "HaGeZi Multi ULTIMATE Blocklist",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/ultimate.txt",
+        "category": "ads",
+        "format": "domains",
+        "scale": "~420k domains",
+        "description": "Aggressive maximum-hardening DNS shield purging ads, affiliate links, telemetry, and CNAME trackers.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "hagezi_apple_native",
+        "name": "HaGeZi Apple iOS & macOS Native Tracker Guard",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/native.apple.txt",
+        "category": "tracking",
+        "format": "domains",
+        "scale": "~500 domains",
+        "description": "Blocks background Apple iOS, iPadOS, and macOS diagnostics and telemetry without breaking iCloud.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "hagezi_samsung_xiaomi",
+        "name": "HaGeZi Xiaomi, Realme & Oppo Native Telemetry",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/native.xiaomi.txt",
+        "category": "tracking",
+        "format": "domains",
+        "scale": "~1.2k domains",
+        "description": "Stops aggressive OS-level background analytics and ad beacons on MIUI/HyperOS and Android OEM phones.",
+        "packs": ["privacy"],
+    },
+    {
+        "id": "stalkerware_indicators",
+        "name": "AssoEchap Stalkerware & Spyware Indicators",
+        "url": "https://raw.githubusercontent.com/AssoEchap/stalkerware-indicators/master/generated/hosts",
+        "category": "malware",
+        "format": "domains",
+        "scale": "~1.5k domains",
+        "description": "Blocks command-and-control servers used by mobile stalkerware, spyware, and covert surveillance apps.",
+        "packs": ["malware"],
+    },
+    {
+        "id": "stevenblack_fakenews",
+        "name": "StevenBlack Clickbait & Disinformation Hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-only/hosts",
+        "category": "custom",
+        "format": "domains",
+        "scale": "~3k domains",
+        "description": "Filters known clickbait farms, deceptive tabloid networks, and automated content-mill domains.",
+        "packs": [],
     },
 ]
 
@@ -204,7 +531,12 @@ class Store:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.auth_failures: dict[str, list[float]] = {}
         self.pause_until: float = 0.0
+        raw_modes = self.meta("device_modes", {})
+        self.device_modes: dict[str, dict[str, Any]] = raw_modes if isinstance(raw_modes, dict) else {}
         self.setup_code = None if self.has_user() else secrets.token_urlsafe(24)
+        self.event_cond = threading.Condition()
+        self._live_events: collections.deque[dict[str, Any]] = collections.deque(maxlen=200)
+        self._event_seq: int = 0
 
     def _schema(self) -> None:
         with self.lock, self.db:
@@ -496,6 +828,22 @@ class Store:
             client = hashlib.sha256(client.encode()).hexdigest()[:16]
         now = time.time()
         entry = (now, client, domain, qtype, action, profile, round(latency, 3), rcode, detail[:500])
+        with self.event_cond:
+            self._event_seq += 1
+            self._live_events.append({
+                "id": self._event_seq,
+                "seq": self._event_seq,
+                "ts": now,
+                "client": client,
+                "domain": domain,
+                "qtype": qtype,
+                "action": action,
+                "profile": profile,
+                "latency": round(latency, 2),
+                "rcode": rcode,
+                "detail": detail[:500],
+            })
+            self.event_cond.notify_all()
 
         if not self.lock.acquire(blocking=False):
             with self.queue_lock:
@@ -600,6 +948,37 @@ class Store:
                 "SELECT action,count(*) count FROM queries WHERE ts>=? GROUP BY action",
                 (cutoff,),
             ).fetchall()
+            prof_rows = self.db.execute(
+                """
+                SELECT profile, count(*) total, COALESCE(sum(action='blocked'), 0) blocked, COALESCE(avg(latency), 0) latency
+                FROM queries WHERE ts>=? GROUP BY profile ORDER BY total DESC
+                """,
+                (cutoff,),
+            ).fetchall()
+            lat_rows = [
+                float(r["latency"])
+                for r in self.db.execute(
+                    "SELECT latency FROM queries WHERE ts>=? ORDER BY latency ASC LIMIT 5000",
+                    (cutoff,),
+                ).fetchall()
+            ]
+            cache_win_row = self.db.execute(
+                "SELECT count(*) c FROM queries WHERE ts>=? AND (detail LIKE '%cache:%' OR detail='cached')",
+                (cutoff,),
+            ).fetchone()
+            sec_win_row = self.db.execute(
+                "SELECT count(*) c FROM queries WHERE ts>=? AND (detail LIKE 'security:%' OR detail LIKE 'cname_cloak:%' OR detail LIKE 'schedule:%')",
+                (cutoff,),
+            ).fetchone()
+            recent_live_rows = self.db.execute(
+                """
+                SELECT q.id, q.ts, q.client, q.domain, q.qtype, q.action, q.profile, q.latency, q.rcode, q.detail,
+                       COALESCE(d.name, '') device_name, COALESCE(d.icon, 'device') device_icon
+                FROM queries q
+                LEFT JOIN devices d ON d.ip = q.client
+                ORDER BY q.id DESC LIMIT 8
+                """
+            ).fetchall()
             series = self.db.execute(
                 f"""
                 SELECT CAST(ts/{bucket_sec} AS INTEGER)*{bucket_sec} bucket,
@@ -625,6 +1004,12 @@ class Store:
         else:
             filled_series = [raw_series[k] for k in sorted(raw_series.keys())]
 
+        def _pct(sorted_vals: list[float], p: float) -> float:
+            if not sorted_vals:
+                return 0.0
+            idx = min(len(sorted_vals) - 1, max(0, int(math.ceil((p / 100.0) * len(sorted_vals)) - 1)))
+            return round(sorted_vals[idx], 2)
+
         return {
             "total": summary["total"] or 0,
             "blocked": summary["blocked"] or 0,
@@ -632,12 +1017,19 @@ class Store:
             "rewritten": summary["rewritten"] or 0,
             "errors": summary["errors"] or 0,
             "latency": round(summary["latency"] or 0, 2),
+            "p50_latency": _pct(lat_rows, 50),
+            "p95_latency": _pct(lat_rows, 95),
+            "p99_latency": _pct(lat_rows, 99),
+            "cache_hits_window": int(cache_win_row["c"] or 0) if cache_win_row else 0,
+            "security_blocks_window": int(sec_win_row["c"] or 0) if sec_win_row else 0,
+            "recent_live": [dict(x) for x in recent_live_rows],
             "top_domains": [dict(x) for x in top],
             "top_blocked": [dict(x) for x in top_blocked],
             "top_allowed": [dict(x) for x in top_allowed],
             "top_clients": [dict(x) for x in top_clients],
             "qtypes": [dict(x) for x in qtypes],
             "actions": [dict(x) for x in actions],
+            "profile_stats": [dict(x) for x in prof_rows],
             "series": filled_series,
         }
 
@@ -707,10 +1099,43 @@ class Store:
             "until": self.pause_until if remaining > 0 else 0,
         }
 
+    def get_device_mode(self, ip: str) -> str:
+        clean_ip = ip.strip()
+        if not clean_ip:
+            return "normal"
+        with self.queue_lock:
+            entry = self.device_modes.get(clean_ip)
+            if not entry:
+                return "normal"
+            exp = entry.get("expires")
+            if exp is not None and float(exp) <= time.time():
+                self.device_modes.pop(clean_ip, None)
+                return "normal"
+            return str(entry.get("mode", "normal"))
+
+    def set_device_mode(self, ip: str, mode: str = "normal", seconds: int = 0) -> dict[str, Any]:
+        import ipaddress
+        clean_ip = str(ipaddress.ip_address(ip.strip()))
+        if mode not in ("normal", "bypass", "quarantine"):
+            raise ValueError("Device mode must be normal, bypass, or quarantine")
+        expires = (time.time() + max(1, min(86400 * 7, int(seconds)))) if (seconds > 0 and mode != "normal") else None
+        with self.queue_lock:
+            if mode == "normal":
+                self.device_modes.pop(clean_ip, None)
+            else:
+                self.device_modes[clean_ip] = {"mode": mode, "expires": expires}
+            snapshot = copy.deepcopy(self.device_modes)
+        self.set_meta("device_modes", snapshot)
+        self.audit("Device mode updated", f"{clean_ip} -> {mode}" + (f" ({seconds}s)" if expires else ""))
+        return {"ok": True, "ip": clean_ip, "mode": mode, "expires": expires}
+
     def get_devices(self) -> list[dict[str, Any]]:
         with self.lock:
             self._flush_pending_queries_locked()
-            return self.rows("SELECT * FROM devices ORDER BY last_seen DESC LIMIT 200")
+            rows = self.rows("SELECT * FROM devices ORDER BY last_seen DESC LIMIT 200")
+        for r in rows:
+            r["mode"] = self.get_device_mode(r["ip"])
+        return rows
 
     def update_device(self, ip: str, name: str, icon: str = "device", profile: str = "*") -> None:
         now = time.time()
@@ -814,6 +1239,7 @@ class Store:
             result.append({
                 "id": key,
                 "name": p["name"],
+                "group": p.get("group", "social"),
                 "description": p["description"],
                 "domains": p["domains"],
                 "blocked": blocked_count == len(p["domains"]),
@@ -856,12 +1282,13 @@ class Store:
 
     def get_schedule(self) -> dict[str, Any]:
         raw = self.meta("focus_schedule", None)
-        if not isinstance(raw, dict):
-            return copy.deepcopy(DEFAULT_SCHEDULE)
         merged = copy.deepcopy(DEFAULT_SCHEDULE)
-        for k in merged:
-            if k in raw:
-                merged[k] = raw[k]
+        if isinstance(raw, dict):
+            for k in merged:
+                if k in raw:
+                    merged[k] = raw[k]
+        merged["start_time"] = merged["start"]
+        merged["end_time"] = merged["end"]
         return merged
 
     def set_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -872,29 +1299,44 @@ class Store:
             current["enabled"] = bool(payload["enabled"])
         if "mode" in payload and str(payload["mode"]) in ("bedtime", "focus", "kids", "custom"):
             current["mode"] = str(payload["mode"])
-        for t_field in ("start", "end"):
-            if t_field in payload:
-                val = str(payload[t_field]).strip()
+        for t_field, alias in (("start", "start_time"), ("end", "end_time")):
+            raw_time = payload.get(t_field) if t_field in payload else payload.get(alias)
+            if raw_time is not None:
+                val = str(raw_time).strip()
                 parts = val.split(":")
                 if len(parts) != 2 or not (0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59):
                     raise ValueError(f"Invalid schedule {t_field} time (expected HH:MM)")
                 current[t_field] = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
         if "days" in payload and isinstance(payload["days"], list):
             valid_days = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
-            current["days"] = [str(d).lower()[:3] for d in payload["days"] if str(d).lower()[:3] in valid_days] or ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+            day_index_map = {0: "mon", 1: "tue", 2: "wed", 3: "thu", 4: "fri", 5: "sat", 6: "sun"}
+            parsed_days: list[str] = []
+            for d in payload["days"]:
+                if isinstance(d, int) and d in day_index_map:
+                    parsed_days.append(day_index_map[d])
+                else:
+                    s = str(d).lower()[:3]
+                    if s in valid_days:
+                        parsed_days.append(s)
+            current["days"] = parsed_days
         if "presets" in payload and isinstance(payload["presets"], list):
             current["presets"] = [str(p) for p in payload["presets"] if str(p) in PRESETS]
         if "categories" in payload and isinstance(payload["categories"], list):
             current["categories"] = [str(c).strip().lower() for c in payload["categories"] if str(c).strip()]
         if "profile" in payload:
             current["profile"] = str(payload["profile"] or "*")
+        current["start_time"] = current["start"]
+        current["end_time"] = current["end"]
         self.set_meta("focus_schedule", current)
-        self.audit("Schedule updated", f"enabled={current['enabled']} ({current['start']}-{current['end']})")
+        self.audit("Schedule updated", f"enabled={current['enabled']} ({current['start']}-{current['end']}) profile={current['profile']}")
         return current
 
-    def is_schedule_active(self, now_ts: float | None = None) -> tuple[bool, dict[str, Any]]:
+    def is_schedule_active(self, now_ts: float | None = None, profile: str = "*") -> tuple[bool, dict[str, Any]]:
         sched = self.get_schedule()
         if not sched.get("enabled"):
+            return False, sched
+        target_prof = sched.get("profile", "*") or "*"
+        if profile != "*" and target_prof not in ("*", profile):
             return False, sched
         tm = time.localtime(now_ts if now_ts is not None else time.time())
         day_name = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[tm.tm_wday]
@@ -913,6 +1355,251 @@ class Store:
         else:
             active = cur_min >= start_min or cur_min <= end_min
         return active, sched
+
+    def get_events_since(self, since_seq: int = 0, limit: int = 50) -> dict[str, Any]:
+        with self.event_cond:
+            items = [e for e in self._live_events if e["seq"] > since_seq]
+            return {"seq": self._event_seq, "events": items[-limit:]}
+
+    def wait_for_events(self, since_seq: int = 0, timeout: float = 10.0) -> dict[str, Any]:
+        with self.event_cond:
+            if self._event_seq <= since_seq:
+                self.event_cond.wait(timeout=max(0.1, min(20.0, timeout)))
+            items = [e for e in self._live_events if e["seq"] > since_seq]
+            return {"seq": self._event_seq, "events": items[-50:]}
+
+    def get_catalog_status(self) -> list[dict[str, Any]]:
+        installed_by_url = {f["url"]: f for f in self.feed_rows()}
+        out: list[dict[str, Any]] = []
+        for item in CURATED_BLOCKLIST_CATALOG:
+            inst = installed_by_url.get(item["url"])
+            out.append({
+                **item,
+                "installed": inst is not None,
+                "feed_id": inst["id"] if inst else None,
+                "enabled": bool(inst["enabled"]) if inst else False,
+                "domain_count": int(inst["domain_count"] or 0) if inst else 0,
+            })
+        return out
+
+    def install_catalog_items(self, feed_id: str = "", pack: str = "") -> dict[str, Any]:
+        existing = {f["url"]: f for f in self.feed_rows()}
+        targets: list[dict[str, Any]] = []
+        if pack:
+            targets = [item for item in CURATED_BLOCKLIST_CATALOG if pack in item.get("packs", [])]
+        elif feed_id:
+            targets = [item for item in CURATED_BLOCKLIST_CATALOG if item["id"] == feed_id]
+        else:
+            targets = [item for item in CURATED_BLOCKLIST_CATALOG if "core" in item.get("packs", [])]
+
+        added = 0
+        with self.lock, self.db:
+            for item in targets:
+                if item["url"] not in existing:
+                    self.db.execute(
+                        "INSERT INTO feeds(name,url,category,enabled,format) VALUES(?,?,?,1,?)",
+                        (item["name"], item["url"], item["category"], item["format"]),
+                    )
+                    added += 1
+        self.audit("Blocklist catalog installed", f"pack={pack or feed_id or 'core'} added={added}")
+        return {
+            "ok": True,
+            "added": added,
+            "installed": added,
+            "target_count": len(targets),
+            "catalog": self.get_catalog_status(),
+            "feeds": self.feed_rows(),
+        }
+
+    def search_blocklists(self, q: str, limit: int = 30) -> dict[str, Any]:
+        clean = q.strip().lower().rstrip(".")
+        if not clean:
+            return {"query": "", "feed_matches": [], "rule_matches": [], "preset_matches": [], "catalog_matches": []}
+        like_pat = f"%{clean}%"
+        with self.lock:
+            feed_matches = [
+                dict(r)
+                for r in self.db.execute(
+                    """
+                    SELECT fd.domain, fd.category, f.id feed_id, f.name feed_name, f.enabled
+                    FROM feed_domains fd
+                    JOIN feeds f ON f.id = fd.feed_id
+                    WHERE fd.domain LIKE ?
+                    ORDER BY LENGTH(fd.domain) ASC
+                    LIMIT ?
+                    """,
+                    (like_pat, limit),
+                ).fetchall()
+            ]
+            rule_matches = [
+                dict(r)
+                for r in self.db.execute(
+                    "SELECT id, pattern, kind, action, profile, value FROM rules WHERE LOWER(pattern) LIKE ? ORDER BY id DESC LIMIT 20",
+                    (like_pat,),
+                ).fetchall()
+            ]
+        preset_matches = []
+        for pid, p in PRESETS.items():
+            matched_doms = [d for d in p["domains"] if clean in d or d in clean]
+            if clean in pid or clean in p["name"].lower() or matched_doms:
+                preset_matches.append({
+                    "id": pid,
+                    "name": p["name"],
+                    "group": p.get("group", "social"),
+                    "matched_domains": matched_doms or p["domains"][:3],
+                })
+        catalog_matches = [
+            {"id": c["id"], "name": c["name"], "category": c["category"], "scale": c["scale"], "url": c["url"]}
+            for c in CURATED_BLOCKLIST_CATALOG
+            if clean in c["name"].lower() or clean in c["description"].lower() or clean in c["category"].lower()
+        ]
+        return {
+            "query": clean,
+            "feed_matches": feed_matches,
+            "rule_matches": rule_matches,
+            "preset_matches": preset_matches,
+            "catalog_matches": catalog_matches,
+        }
+
+    def device_insights(self, ip: str, window: int = 86400) -> dict[str, Any]:
+        clean_ip = ip.strip()
+        cutoff = time.time() - max(300, int(window))
+        with self.lock:
+            self._flush_pending_queries_locked()
+            dev_row = self.db.execute("SELECT * FROM devices WHERE ip=?", (clean_ip,)).fetchone()
+            summary = self.db.execute(
+                """
+                SELECT count(*) total,
+                       COALESCE(sum(action='blocked'), 0) blocked,
+                       COALESCE(sum(action='allowed'), 0) allowed,
+                       COALESCE(sum(action='rewritten'), 0) rewritten,
+                       COALESCE(avg(latency), 0) avg_latency
+                FROM queries WHERE client=? AND ts>=?
+                """,
+                (clean_ip, cutoff),
+            ).fetchone()
+            top_allowed = [
+                dict(r)
+                for r in self.db.execute(
+                    "SELECT domain, count(*) count FROM queries WHERE client=? AND ts>=? AND action='allowed' AND domain<>'' GROUP BY domain ORDER BY count DESC LIMIT 6",
+                    (clean_ip, cutoff),
+                ).fetchall()
+            ]
+            top_blocked = [
+                dict(r)
+                for r in self.db.execute(
+                    "SELECT domain, count(*) count FROM queries WHERE client=? AND ts>=? AND action='blocked' AND domain<>'' GROUP BY domain ORDER BY count DESC LIMIT 6",
+                    (clean_ip, cutoff),
+                ).fetchall()
+            ]
+            recent = [
+                dict(r)
+                for r in self.db.execute(
+                    "SELECT id, ts, domain, qtype, action, profile, latency, rcode, detail FROM queries WHERE client=? ORDER BY id DESC LIMIT 10",
+                    (clean_ip,),
+                ).fetchall()
+            ]
+        total = int(summary["total"] or 0) if summary else 0
+        blocked = int(summary["blocked"] or 0) if summary else 0
+        return {
+            "ip": clean_ip,
+            "mode": self.get_device_mode(clean_ip),
+            "name": dev_row["name"] if dev_row else "",
+            "icon": dev_row["icon"] if dev_row else "device",
+            "profile": dev_row["profile"] if dev_row else "*",
+            "total": total,
+            "blocked": blocked,
+            "allowed": int(summary["allowed"] or 0) if summary else 0,
+            "rewritten": int(summary["rewritten"] or 0) if summary else 0,
+            "block_rate_pct": round((blocked / total) * 100, 1) if total else 0.0,
+            "avg_latency": round(float(summary["avg_latency"] or 0.0), 2) if summary else 0.0,
+            "top_allowed": top_allowed,
+            "top_blocked": top_blocked,
+            "recent": recent,
+        }
+
+    def system_overview(self) -> dict[str, Any]:
+        db_bytes = 0
+        for name in ("lattice.db", "lattice.db-wal", "lattice.db-shm"):
+            p = self.root / name
+            if p.exists():
+                try:
+                    db_bytes += p.stat().st_size
+                except OSError:
+                    pass
+        with self.lock:
+            self._flush_pending_queries_locked()
+            q_cnt = int(self.db.execute("SELECT count(*) c FROM queries").fetchone()["c"] or 0)
+            a_cnt = int(self.db.execute("SELECT count(*) c FROM audit").fetchone()["c"] or 0)
+            fd_cnt = int(self.db.execute("SELECT count(*) c FROM feed_domains").fetchone()["c"] or 0)
+            r_cnt = int(self.db.execute("SELECT count(*) c FROM rules").fetchone()["c"] or 0)
+            d_cnt = int(self.db.execute("SELECT count(*) c FROM devices").fetchone()["c"] or 0)
+        return {
+            "db_size_bytes": db_bytes,
+            "db_size_kb": round(db_bytes / 1024.0, 1),
+            "db_size_mb": round(db_bytes / (1024.0 * 1024.0), 2),
+            "total_queries_stored": q_cnt,
+            "total_audit_rows": a_cnt,
+            "total_feed_domains": fd_cnt,
+            "total_rules": r_cnt,
+            "total_devices": d_cnt,
+            "active_sessions": len(self.sessions),
+        }
+
+    def vacuum_database(self) -> dict[str, Any]:
+        before = self.system_overview()["db_size_bytes"]
+        self.cleanup()
+        self.clear_expired_rules()
+        with self.lock:
+            try:
+                self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self.db.execute("PRAGMA optimize")
+            except Exception:
+                pass
+        after = self.system_overview()["db_size_bytes"]
+        self.audit("Database optimized & checkpointed", f"before={before}B after={after}B")
+        return {"ok": True, "before_bytes": before, "after_bytes": after, "system_info": self.system_overview()}
+
+    def test_rule_pattern(self, pattern: str, kind: str = "suffix", sample: str = "") -> dict[str, Any]:
+        clean_pat = pattern.strip()
+        if not clean_pat:
+            raise ValueError("Pattern is required")
+        if kind not in ("exact", "suffix", "regex"):
+            raise ValueError("Invalid match kind")
+
+        def matches_domain(dom: str) -> bool:
+            d = dom.strip().lower().rstrip(".")
+            if not d:
+                return False
+            if kind == "exact":
+                return d == clean_pat.lower().rstrip(".")
+            if kind == "suffix":
+                sfx = clean_pat.lower().lstrip("*.").rstrip(".")
+                return d == sfx or d.endswith("." + sfx)
+            try:
+                return bool(re.search(clean_pat, d, re.IGNORECASE))
+            except re.error as exc:
+                raise ValueError(f"Invalid regular expression: {exc}") from exc
+
+        sample_clean = sample.strip().lower().rstrip(".")
+        sample_match = matches_domain(sample_clean) if sample_clean else None
+
+        with self.lock:
+            self._flush_pending_queries_locked()
+            recent_domains = [
+                r["domain"]
+                for r in self.db.execute("SELECT DISTINCT domain FROM queries WHERE domain<>'' ORDER BY id DESC LIMIT 300").fetchall()
+            ]
+        matched_history = [d for d in recent_domains if matches_domain(d)][:15]
+        return {
+            "ok": True,
+            "pattern": clean_pat,
+            "kind": kind,
+            "sample": sample_clean,
+            "sample_matches": sample_match,
+            "matched_recent_domains": matched_history,
+            "matched_count": len(matched_history),
+        }
 
     def close(self) -> None:
         with self.lock:

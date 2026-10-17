@@ -832,7 +832,7 @@ class FlagshipV5Tests(unittest.TestCase):
 
     def test_12_presets_and_recommended_feed_bundle(self):
         presets = self.store.get_presets_status()
-        self.assertEqual(len(presets), 12)
+        self.assertEqual(len(presets), 24)
         preset_ids = {p["id"] for p in presets}
         self.assertIn("ai_bots", preset_ids)
         self.assertIn("cryptominers", preset_ids)
@@ -924,6 +924,396 @@ class FlagshipV5Tests(unittest.TestCase):
         self.assertEqual(dec.action, "deny")
         self.assertTrue(dec.source.startswith("rule:"))
         self.assertIn("tracker.bad.org", dec.source)
+
+
+    def test_security_shields_doh_canary_punycode_and_risky_tlds(self):
+        # 1. DoH canary (use-application-dns.net) blocked by default
+        dec_canary = self.policy.decide("192.168.1.10", "use-application-dns.net")
+        self.assertEqual(dec_canary.action, "deny")
+        self.assertEqual(dec_canary.source, "security:doh-canary")
+
+        # 2. Punycode IDN homograph & Risky TLD shields
+        cfg = copy.deepcopy(self.store.config)
+        cfg["block_punycode"] = True
+        cfg["block_risky_tlds"] = True
+        self.store.set_config(cfg)
+
+        dec_puny = self.policy.decide("192.168.1.10", "xn--80ak6aa92e.com")
+        self.assertEqual(dec_puny.action, "deny")
+        self.assertEqual(dec_puny.source, "security:punycode-homograph")
+
+        dec_zip = self.policy.decide("192.168.1.10", "quarterly-invoice.zip")
+        self.assertEqual(dec_zip.action, "deny")
+        self.assertEqual(dec_zip.source, "security:risky-tld (.zip)")
+
+        # 3. Manual allow rule overrides security shields
+        self.store.add_rule("quarterly-invoice.zip", "exact", "allow", "", "*", None)
+        self.policy.compile()
+        self.assertEqual(self.policy.decide("192.168.1.10", "quarterly-invoice.zip").action, "allow")
+
+    def test_dns_rebinding_runtime_guard_and_local_record_exemption(self):
+        from lattice.transport import DNSGateway, is_rebinding_ip
+        from unittest.mock import patch
+
+        self.assertTrue(is_rebinding_ip("192.168.1.1"))
+        self.assertTrue(is_rebinding_ip("127.0.0.1"))
+        self.assertTrue(is_rebinding_ip("169.254.169.254"))
+        self.assertTrue(is_rebinding_ip("10.0.0.1"))
+        self.assertFalse(is_rebinding_ip("93.184.216.34"))
+        self.assertFalse(is_rebinding_ip("192.0.2.50"))
+
+        certs = CertificateVault(self.store)
+        gw = DNSGateway(self.store, self.policy, certs, 15533, 18893, 18894)
+        q_rebind = query("evil-rebind.example.com", 1)
+        fake_upstream_ans = rewrite_response(q_rebind, 1, "192.168.1.1", ttl=60)
+
+        with patch("lattice.transport.forward_local", return_value=fake_upstream_ans):
+            resp = gw.handle_query(q_rebind, "192.168.1.50", transport="dot")
+            self.assertEqual(resp[3] & 15, 3)  # Blocked with NXDOMAIN
+            rows = self.store.rows("SELECT * FROM queries WHERE domain='evil-rebind.example.com'")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["action"], "blocked")
+            self.assertIn("security:dns-rebinding", rows[0]["detail"])
+
+    def test_weekday_and_per_profile_schedule_isolation(self):
+        cfg = copy.deepcopy(self.store.config)
+        cfg["profiles"].append({
+            "id": "kids",
+            "name": "Kids Profile",
+            "networks": ["192.168.99.0/24"],
+            "categories": ["ads"],
+            "rate_limit": 300,
+            "logging": True,
+        })
+        self.store.set_config(cfg)
+        self.policy.compile()
+
+        self.store.set_schedule({
+            "enabled": True,
+            "mode": "bedtime",
+            "start": "00:00",
+            "end": "23:59",
+            "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "presets": ["tiktok"],
+            "profile": "kids",
+        })
+
+        # Kids subnet device is blocked from TikTok
+        dec_kids = self.policy.decide("192.168.99.15", "www.tiktok.com")
+        self.assertEqual(dec_kids.action, "deny")
+        self.assertIn("schedule:bedtime:tiktok", dec_kids.source)
+
+        # Default subnet device is unaffected by kids-only schedule
+        dec_adult = self.policy.decide("192.168.1.15", "www.tiktok.com")
+        self.assertEqual(dec_adult.action, "allow")
+
+    def test_live_event_ring_buffer_and_latency_percentiles(self):
+        cfg = copy.deepcopy(self.store.config)
+        cfg["privacy"]["mode"] = "full"
+        self.store.set_config(cfg)
+
+        for lat, dom, act, det in [
+            (0.4, "fast.example.com", "allowed", "cache:l1"),
+            (2.1, "normal.example.com", "allowed", "policy:default"),
+            (14.5, "slow.example.com", "allowed", "policy:default"),
+            (38.0, "rebind.example.com", "blocked", "security:dns-rebinding (10.0.0.1)"),
+        ]:
+            self.store.log_query("192.168.1.25", dom, 1, act, "default", lat, 0, det)
+
+        ev = self.store.get_events_since(0)
+        self.assertGreaterEqual(ev["seq"], 4)
+        self.assertEqual(len(ev["events"]), 4)
+
+        dash = self.store.dashboard(window=3600)
+        self.assertGreater(dash["p50_latency"], 0)
+        self.assertGreaterEqual(dash["p95_latency"], dash["p50_latency"])
+        self.assertEqual(dash["cache_hits_window"], 1)
+        self.assertEqual(dash["security_blocks_window"], 1)
+        self.assertEqual(len(dash["recent_live"]), 4)
+
+    def test_l1_hot_domain_prefetch_candidates_and_tls_pool(self):
+        from lattice.transport import DNSCache, UPSTREAM_TLS_POOL
+
+        cache = DNSCache(max_entries=64)
+        q1 = _question("hot.example.com", ident=0x1111)
+        resp1 = rewrite_response(q1, 1, "93.184.216.34", ttl=100)
+        cache.put("hot.example.com", 1, True, resp1)
+        # Simulate a cache hit and near-expiration TTL (10s left)
+        _ = cache.get("hot.example.com", 1, True, b"\x22\x22")
+        cache.entries[("hot.example.com", 1, True)]["expires_at"] = time.time() + 10
+        candidates = cache.expiring_hot_candidates()
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0][0], "hot.example.com")
+
+        UPSTREAM_TLS_POOL.record_latency("cloudflare", 18.0)
+        UPSTREAM_TLS_POOL.record_latency("cloudflare", 12.0)
+        pool_stats = UPSTREAM_TLS_POOL.stats()
+        self.assertIn("cloudflare", pool_stats["ewma_latencies_ms"])
+
+
+    def test_18_feed_catalog_marketplace_and_packs(self):
+        cat = self.store.get_catalog_status()
+        self.assertEqual(len(cat), 24)
+        self.assertTrue(all(not c["installed"] for c in cat))
+
+        # Install single catalog feed (OISD Small)
+        res1 = self.store.install_catalog_items(feed_id="oisd_small")
+        self.assertEqual(res1["added"], 1)
+        self.assertTrue(any(c["id"] == "oisd_small" and c["installed"] for c in res1["catalog"]))
+
+        # Install Malware Fortress pack (7 lists)
+        res2 = self.store.install_catalog_items(pack="malware")
+        self.assertEqual(res2["target_count"], 7)
+        self.assertEqual(res2["added"], 7)
+        self.assertEqual(len(self.store.feeds()), 8)
+
+    def test_cross_blocklist_and_preset_attribution_search(self):
+        with self.store.lock, self.store.db:
+            cur = self.store.db.execute(
+                "INSERT INTO feeds(name,url,category,enabled,format) VALUES(?,?,?,?,1)",
+                ("OISD Small", "https://small.oisd.nl/domainswild2", "ads", "domains"),
+            )
+            fid = cur.lastrowid
+            self.store.db.execute(
+                "INSERT INTO feed_domains(feed_id,category,domain) VALUES(?,?,?)",
+                (fid, "ads", "ads.doubleclick.net"),
+            )
+        self.store.add_rule("custom.doubleclick.net", "exact", "deny", "", "*", None)
+
+        res_dc = self.store.search_blocklists("doubleclick")
+        self.assertEqual(len(res_dc["feed_matches"]), 1)
+        self.assertEqual(res_dc["feed_matches"][0]["feed_name"], "OISD Small")
+        self.assertEqual(len(res_dc["rule_matches"]), 1)
+
+        res_tt = self.store.search_blocklists("tiktok")
+        self.assertTrue(any(p["id"] == "tiktok" for p in res_tt["preset_matches"]))
+
+    def test_per_device_telemetry_insights(self):
+        cfg = copy.deepcopy(self.store.config)
+        cfg["privacy"]["mode"] = "full"
+        self.store.set_config(cfg)
+        self.store.update_device("192.168.1.77", "Living Room Apple TV", "tv", "default")
+        self.store.log_query("192.168.1.77", "apple.com", 1, "allowed", "default", 1.2, 0, "cache:l1")
+        self.store.log_query("192.168.1.77", "apple.com", 28, "allowed", "default", 0.8, 0, "cache:l1")
+        self.store.log_query("192.168.1.77", "metrics.icloud.com", 1, "blocked", "default", 0.3, 3, "feed:OISD")
+
+        ins = self.store.device_insights("192.168.1.77", window=3600)
+        self.assertEqual(ins["name"], "Living Room Apple TV")
+        self.assertEqual(ins["total"], 3)
+        self.assertEqual(ins["blocked"], 1)
+        self.assertEqual(ins["allowed"], 2)
+        self.assertAlmostEqual(ins["block_rate_pct"], 33.3, places=1)
+        self.assertEqual(ins["top_allowed"][0]["domain"], "apple.com")
+        self.assertEqual(ins["top_blocked"][0]["domain"], "metrics.icloud.com")
+
+
+    def test_per_device_bypass_and_quarantine_modes(self):
+        self.store.add_rule("blocked-ad.example.com", "exact", "deny", "", "*", None)
+        self.policy.compile()
+
+        # Both devices initially blocked
+        self.assertEqual(self.policy.decide("192.168.1.99", "blocked-ad.example.com").action, "deny")
+        self.assertEqual(self.policy.decide("192.168.1.100", "blocked-ad.example.com").action, "deny")
+
+        # Set 192.168.1.99 to bypass mode for 300s
+        self.store.set_device_mode("192.168.1.99", mode="bypass", seconds=300)
+        dec_bypass = self.policy.decide("192.168.1.99", "blocked-ad.example.com")
+        self.assertEqual(dec_bypass.action, "allow")
+        self.assertEqual(dec_bypass.source, "policy:device-bypass")
+        # Other device still blocked!
+        self.assertEqual(self.policy.decide("192.168.1.100", "blocked-ad.example.com").action, "deny")
+
+        # Set 192.168.1.99 to quarantine mode (Internet pause)
+        self.store.set_device_mode("192.168.1.99", mode="quarantine", seconds=0)
+        dec_quar = self.policy.decide("192.168.1.99", "wikipedia.org")
+        self.assertEqual(dec_quar.action, "deny")
+        self.assertEqual(dec_quar.source, "policy:device-quarantine")
+        # Android essential probe still protected
+        self.assertEqual(self.policy.decide("192.168.1.99", "connectivitycheck.gstatic.com").action, "allow")
+
+        # Reset to normal
+        self.store.set_device_mode("192.168.1.99", mode="normal")
+        self.assertEqual(self.policy.decide("192.168.1.99", "wikipedia.org").action, "allow")
+
+    def test_custom_sinkhole_block_ip_and_custom_ttl(self):
+        from lattice.transport import DNSGateway, decode_dns_answers
+
+        cfg = copy.deepcopy(self.store.config)
+        cfg["block_response"] = "custom_ip"
+        cfg["block_custom_ip"] = "192.168.1.250"
+        cfg["block_ttl"] = 120
+        self.store.set_config(validate_config(cfg))
+        self.store.add_rule("sinkhole-test.example.com", "exact", "deny", "", "*", None)
+        self.policy.compile()
+
+        certs = CertificateVault(self.store)
+        gw = DNSGateway(self.store, self.policy, certs, 15533, 18893, 18894)
+        q_pkt = query("sinkhole-test.example.com", 1)
+        resp = gw.handle_query(q_pkt, "192.168.1.50", transport="dot")
+        ans = decode_dns_answers(resp)
+        self.assertEqual(len(ans), 1)
+        self.assertEqual(ans[0]["data"], "192.168.1.250")
+        self.assertEqual(ans[0]["ttl"], 120)
+
+    def test_security_posture_score_and_24_catalog_expansion(self):
+        from lattice.app import Lattice
+
+        app = Lattice(self.tmp.name, resolver_port=15563, dot_port=18903, frp_local_port=18904)
+        try:
+            app.store.install_catalog_items(pack="core")
+            app.store.toggle_preset("smart_tv_acr", True)
+            app.policy.compile()
+            score_obj = app.compute_security_score()
+            self.assertGreaterEqual(score_obj["score"], 85)
+            self.assertIn(score_obj["grade"], ("A", "A+"))
+        finally:
+            app.shutdown()
+
+
+    def test_vpn_random_uuid_dot_probe_instant_synthesis(self):
+        from lattice.transport import DNSGateway, decode_dns_answers
+
+        certs = CertificateVault(self.store)
+        gw = DNSGateway(self.store, self.policy, certs, 15999, 18991, 18992)
+        # Even with port 15999 (no Unbound running), random-UUID Android DoT probe resolves in <5ms!
+        t0 = time.monotonic()
+        q_v4 = query("vpn-switch-987654.dnsotls-ds.metric.gstatic.com", 1)
+        resp_v4 = gw.handle_query(q_v4, "10.8.0.5", transport="dot")
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        self.assertLess(elapsed_ms, 25.0)
+        self.assertEqual(resp_v4[3] & 15, 0)
+        ans = decode_dns_answers(resp_v4)
+        self.assertEqual(len(ans), 1)
+        self.assertEqual(ans[0]["data"], "142.250.190.14")
+
+        q_v6 = query("vpn-switch-987654.dnsotls-ds.metric.gstatic.com", 28)
+        resp_v6 = gw.handle_query(q_v6, "10.8.0.5", transport="dot")
+        ans6 = decode_dns_answers(resp_v6)
+        self.assertEqual(len(ans6), 1)
+        self.assertEqual(ans6[0]["data"], "2607:f8b0:4005:801::200e")
+
+    def test_vpn_oem_captive_portal_probes_never_blocked_or_servfailed(self):
+        from lattice.transport import DNSGateway, decode_dns_answers
+        from unittest.mock import patch
+
+        oem_domains = [
+            "connectivitycheck.gstatic.com",
+            "connect.rom.miui.com",
+            "connectivitycheck.platform.hicloud.com",
+            "conn1.oppomobile.com",
+            "wifi.vivo.com.cn",
+            "captive.apple.com",
+            "cp.cloudflare.com",
+            "www.msftconnecttest.com",
+        ]
+        for dom in oem_domains:
+            self.assertIsNone(parse_feed_line(f"0.0.0.0 {dom}", "auto"))
+            self.assertEqual(self.policy.decide("10.8.0.2", dom).action, "allow")
+
+        # Even if both Unbound and upstream DoT fail during a VPN route switch, connectivity probes never SERVFAIL!
+        certs = CertificateVault(self.store)
+        gw = DNSGateway(self.store, self.policy, certs, 15998, 18993, 18994)
+        with patch("lattice.transport.forward_local", side_effect=TimeoutError("Unbound timeout")), \
+             patch("lattice.transport.forward_upstream_dot", side_effect=OSError("Network unreachable")):
+            for dom in ("connectivitycheck.gstatic.com", "connect.rom.miui.com", "cp.cloudflare.com", "captive.apple.com"):
+                resp = gw.handle_query(query(dom, 1), "10.8.0.2", transport="dot")
+                self.assertEqual(resp[3] & 15, 0, f"{dom} returned non-zero RCODE during VPN transition")
+                ans = decode_dns_answers(resp)
+                self.assertEqual(len(ans), 1)
+
+    def test_vpn_mtu_1280_one_byte_tls_clienthello_fastpath(self):
+        from lattice.transport import peek_and_read_proxy
+
+        class OneByteTLSSocket:
+            def recv(self, size: int, flags: int = 0) -> bytes:
+                # Simulate a VPN tunnel fragmenting the first TCP segment to 1 byte (0x16 TLS Handshake)
+                return b"\x16"
+
+        self.assertEqual(peek_and_read_proxy(OneByteTLSSocket()), "")
+
+    def test_vpn_readiness_doctor_and_upstream_pool_clear(self):
+        from lattice.app import Lattice
+        from lattice.transport import UPSTREAM_TLS_POOL
+
+        app = Lattice(self.tmp.name, resolver_port=15573, dot_port=18913, frp_local_port=18914)
+        try:
+            report = app.vpn_readiness()
+            self.assertTrue(report["ready"], f"VPN readiness failed: {report}")
+            self.assertEqual(report["passed"], 6)
+            self.assertEqual(report["total"], 6)
+            self.assertGreaterEqual(UPSTREAM_TLS_POOL.clear(), 0)
+        finally:
+            app.shutdown()
+
+
+    def test_gzip_feed_download_and_parallel_single_pass_refresh_all(self):
+        import gzip
+        from unittest.mock import patch
+        from lattice.feeds import FeedManager
+
+        fm = FeedManager(self.store, self.policy)
+        with self.store.lock, self.store.db:
+            self.store.db.execute(
+                "INSERT INTO feeds(name,url,category,enabled,format) VALUES(?,?,?,1,?)",
+                ("GzipList1", "https://example.com/list1.txt.gz", "ads", "domains"),
+            )
+            self.store.db.execute(
+                "INSERT INTO feeds(name,url,category,enabled,format) VALUES(?,?,?,1,?)",
+                ("GzipList2", "https://example.com/list2.txt.gz", "malware", "adblock"),
+            )
+
+        gz_payload = gzip.compress(b"0.0.0.0 gz-ad1.example.com\n||gz-ad2.example.org^\n")
+
+        class MockGzipResp:
+            headers = {"Content-Encoding": "gzip"}
+            def __init__(self, data: bytes):
+                self._io = io.BytesIO(data)
+            def geturl(self):
+                return "https://example.com/list1.txt.gz"
+            def read(self, sz: int = -1):
+                return self._io.read(sz)
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        with patch("lattice.feeds.validate_url", side_effect=lambda u: u), \
+             patch("urllib.request.urlopen", side_effect=lambda *a, **kw: MockGzipResp(gz_payload)):
+            results = fm.refresh_all()
+            self.assertEqual(len(results), 2)
+            self.assertEqual(self.policy.decide("192.168.1.10", "gz-ad1.example.com").action, "deny")
+            self.assertEqual(self.policy.decide("192.168.1.10", "sub.gz-ad2.example.org").action, "deny")
+
+    def test_rule_pattern_live_tester(self):
+        cfg = copy.deepcopy(self.store.config)
+        cfg["privacy"]["mode"] = "full"
+        self.store.set_config(cfg)
+        self.store.log_query("192.168.1.20", "ad99.tracker.example.com", 1, "allowed", "default", 1.1, 0, "")
+        self.store.log_query("192.168.1.20", "clean.example.com", 1, "allowed", "default", 1.1, 0, "")
+
+        res_re = self.store.test_rule_pattern(r"^ad[0-9]+\.tracker\.example\.com$", "regex", "ad42.tracker.example.com")
+        self.assertTrue(res_re["ok"])
+        self.assertTrue(res_re["sample_matches"])
+        self.assertIn("ad99.tracker.example.com", res_re["matched_recent_domains"])
+
+    def test_sqlite_wal_vacuum_and_system_overview(self):
+        info = self.store.system_overview()
+        self.assertGreater(info["db_size_bytes"], 0)
+        vac = self.store.vacuum_database()
+        self.assertTrue(vac["ok"])
+        self.assertIn("system_info", vac)
+
+    def test_dashboard_profile_stats_breakdown(self):
+        cfg = copy.deepcopy(self.store.config)
+        cfg["privacy"]["mode"] = "full"
+        self.store.set_config(cfg)
+        self.store.log_query("192.168.1.10", "a.example.com", 1, "allowed", "default", 1.5, 0, "")
+        self.store.log_query("192.168.1.10", "b.example.com", 1, "blocked", "default", 0.5, 3, "feed:test")
+        dash = self.store.dashboard(window=3600)
+        self.assertIn("profile_stats", dash)
+        self.assertEqual(len(dash["profile_stats"]), 1)
+        self.assertEqual(dash["profile_stats"][0]["profile"], "default")
+        self.assertEqual(dash["profile_stats"][0]["total"], 2)
 
 
 if __name__ == "__main__":

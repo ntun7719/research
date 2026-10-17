@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080c10">
-  <title>Lattice DNS — Gemini Sovereign Control Plane</title>
+  <title>Lattice DNS — Gemini Singularity Control Plane</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
 </head>
@@ -23,7 +23,7 @@
         <div class="auth-brand-text">
           <div class="brand-title-row">
             <strong>Lattice DNS</strong>
-            <span class="edition-pill">Gemini Sovereign</span>
+            <span class="edition-pill">Gemini Singularity</span>
           </div>
           <span>Encrypted DoT &amp; DoH Control Plane</span>
         </div>
@@ -62,7 +62,7 @@
             <strong>Lattice DNS</strong>
             <span class="edition-tag">Gemini</span>
           </div>
-          <span id="rail-version">Version 7.0.0</span>
+          <span id="rail-version">Version 12.0.0</span>
         </div>
         <button id="close-nav" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button>
       </div>
@@ -264,6 +264,37 @@
           </article>
         </div>
 
+        <div class="telemetry-ribbon" id="telemetry-ribbon">
+          <div class="telemetry-ribbon-item">
+            <span class="ribbon-label">Latency Percentiles (P50 / P95 / P99)</span>
+            <div class="ribbon-values">
+              <span class="code-pill" id="p50-latency">P50: 0.0 ms</span>
+              <span class="code-pill" id="p95-latency">P95: 0.0 ms</span>
+              <span class="code-pill" id="p99-latency">P99: 0.0 ms</span>
+            </div>
+          </div>
+          <div class="telemetry-ribbon-item">
+            <span class="ribbon-label">Encrypted Transport Split</span>
+            <div class="ribbon-values">
+              <span class="badge info" id="proto-dot-count">DoT :853 — 0</span>
+              <span class="badge allowed" id="proto-doh-count">DoH :443 — 0</span>
+            </div>
+          </div>
+          <div class="telemetry-ribbon-item">
+            <span class="ribbon-label">TLS 1.3 Pool &amp; TTL Prefetcher</span>
+            <div class="ribbon-values">
+              <span class="code-pill" id="pool-hits-count">Pool Hits: 0</span>
+              <span class="code-pill" id="prefetch-count">Prefetches: 0</span>
+            </div>
+          </div>
+          <div class="telemetry-ribbon-item">
+            <span class="ribbon-label">Active Threat &amp; Focus Blocks</span>
+            <div class="ribbon-values">
+              <span class="badge blocked" id="sec-blocks-count">0 security/focus blocks</span>
+            </div>
+          </div>
+        </div>
+
         <article class="card topology-card">
           <div class="card-header">
             <div>
@@ -330,15 +361,27 @@
                   <h2>Query &amp; Threat Telemetry</h2>
                   <span id="chart-hover-readout" class="badge info hidden"></span>
                 </div>
-                <p>Hover or touch across the timeline to inspect per-bucket query volume and block ratios.</p>
+                <p>Hover or touch across the timeline to inspect per-bucket query volume, block ratios, and traffic split.</p>
               </div>
-              <div class="legend">
-                <span><i class="legend-dot total"></i>Total Queries</span>
-                <span><i class="legend-dot blocked"></i>Blocked Threats</span>
+              <div class="chart-controls-wrap">
+                <div class="chart-mode-pills" id="chart-mode-pills">
+                  <button type="button" class="chart-mode-btn active" data-chart-mode="volume">Volume</button>
+                  <button type="button" class="chart-mode-btn" data-chart-mode="block_rate">Block %</button>
+                  <button type="button" class="chart-mode-btn" data-chart-mode="split">Allow vs Block</button>
+                </div>
+                <div class="legend" id="chart-legend">
+                  <span><i class="legend-dot total"></i>Total Queries</span>
+                  <span><i class="legend-dot blocked"></i>Blocked Threats</span>
+                </div>
               </div>
             </div>
             <div class="chart-container">
               <svg id="traffic-chart" viewBox="0 0 1000 250" preserveAspectRatio="none" aria-label="DNS traffic chart"></svg>
+            </div>
+            <div class="chart-summary-bar" id="chart-summary-bar">
+              <span>Peak Interval: <strong id="chart-peak-label">—</strong></span>
+              <span>Avg / Bucket: <strong id="chart-avg-label">0 queries</strong></span>
+              <span>Window Cache Hits: <strong id="chart-cache-label">0</strong></span>
             </div>
           </article>
 
@@ -377,6 +420,92 @@
                 <rect class="metric-bar-bg" width="100" height="6" rx="3"></rect>
                 <rect id="cert-progress-rect" class="metric-bar-fill good" width="0" height="6" rx="3"></rect>
               </svg>
+            </div>
+          </article>
+        </div>
+
+        <div class="content-grid two" id="dashboard-executive-row">
+          <article class="card" id="dashboard-security-card">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>Security Shields &amp; Focus Posture</h2>
+                  <span id="security-score-badge" class="badge allowed">Grade A • 90/100</span>
+                  <span id="active-shields-badge" class="badge info">4/6 Shields</span>
+                </div>
+                <p>One-click hardware-grade DNS defense toggles and scheduled focus/curfew state.</p>
+              </div>
+              <button type="button" class="text-button jump-page" data-target="dns">All Options →</button>
+            </div>
+            <div class="shields-grid" id="dash-shields-grid">
+              <button type="button" class="shield-tile active" data-shield="dnssec">
+                <div class="shield-tile-top">
+                  <strong>DNSSEC Validation</strong>
+                  <span class="shield-pill">ON</span>
+                </div>
+                <small>RFC 4035 cryptographic root signatures</small>
+              </button>
+              <button type="button" class="shield-tile active" data-shield="rebinding_protection">
+                <div class="shield-tile-top">
+                  <strong>DNS Rebinding Guard</strong>
+                  <span class="shield-pill">ON</span>
+                </div>
+                <small>Block RFC 1918 &amp; cloud metadata IPs</small>
+              </button>
+              <button type="button" class="shield-tile active" data-shield="block_doh_canary">
+                <div class="shield-tile-top">
+                  <strong>DoH Bypass Canary</strong>
+                  <span class="shield-pill">ON</span>
+                </div>
+                <small>Enforce Private DNS on browsers</small>
+              </button>
+              <button type="button" class="shield-tile" data-shield="safesearch">
+                <div class="shield-tile-top">
+                  <strong>Strict SafeSearch</strong>
+                  <span class="shield-pill">OFF</span>
+                </div>
+                <small>Family-safe VIP search &amp; YouTube</small>
+              </button>
+              <button type="button" class="shield-tile" data-shield="block_risky_tlds">
+                <div class="shield-tile-top">
+                  <strong>Risky TLD Shield</strong>
+                  <span class="shield-pill">OFF</span>
+                </div>
+                <small>Block .zip, .mov, .top, .tk phishing</small>
+              </button>
+              <button type="button" class="shield-tile" data-shield="block_punycode">
+                <div class="shield-tile-top">
+                  <strong>IDN Punycode Guard</strong>
+                  <span class="shield-pill">OFF</span>
+                </div>
+                <small>Intercept xn-- lookalike homographs</small>
+              </button>
+            </div>
+            <div class="dash-schedule-bar" id="dash-schedule-bar">
+              <div>
+                <strong>Scheduled Curfew / Deep Focus</strong>
+                <small id="dash-schedule-summary">Standby — No active time window</small>
+              </div>
+              <div class="button-row">
+                <span id="dash-schedule-pill" class="badge info">Standby</span>
+                <button type="button" class="btn-mini-action" id="dash-jump-schedule-btn">Configure</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="card" id="dashboard-live-pulse">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>Live DNS Pulse</h2>
+                  <span id="dash-sse-badge" class="badge allowed"><span class="pulse-indicator"></span>Real-Time SSE</span>
+                </div>
+                <p>Instant stream of the latest resolved, cached, and blocked queries across all endpoints.</p>
+              </div>
+              <button type="button" class="text-button jump-page" data-target="queries">Full Journal →</button>
+            </div>
+            <div id="dash-live-list" class="ranked-list">
+              <div class="empty-state">Waiting for live DNS traffic...</div>
             </div>
           </article>
         </div>
@@ -444,7 +573,10 @@
                 <h2>Upstream DoT Resolvers</h2>
                 <p>Live TLS health probes and round-trip latency to upstream servers.</p>
               </div>
-              <button type="button" class="text-button jump-page" data-target="dns">Configure →</button>
+              <div class="button-row">
+                <button id="dash-reconnect-upstreams-btn" type="button" class="btn-mini-action" title="Reset pooled TLS sockets and flush stale cache after VPN/network switch">Reconnect Pool</button>
+                <button type="button" class="text-button jump-page" data-target="dns">Configure →</button>
+              </div>
             </div>
             <div id="upstream-health" class="list-stack"></div>
           </article>
@@ -523,6 +655,13 @@
                 <option value="16">TXT</option>
                 <option value="15">MX</option>
                 <option value="12">PTR</option>
+              </select>
+              <select id="query-rcode-filter" class="compact-select">
+                <option value="all">All RCODEs</option>
+                <option value="0">NOERROR (0)</option>
+                <option value="3">NXDOMAIN (3)</option>
+                <option value="2">SERVFAIL (2)</option>
+                <option value="5">REFUSED (5)</option>
               </select>
               <button id="export-csv-btn" type="button" class="button secondary">Export CSV</button>
               <button id="clear-queries-btn" type="button" class="button danger">Clear Log</button>
@@ -607,6 +746,21 @@
           <button type="button" class="subnav-item" data-block-tab="devices">Client Devices &amp; Profiles</button>
         </div>
 
+        <article class="card lookup-bar-card" id="blocklist-lookup-card">
+          <div class="lookup-bar-row">
+            <div class="lookup-bar-copy">
+              <strong>Instant Blocklist, Rule &amp; Preset Attribution Lookup</strong>
+              <small>Check which installed blocklist feeds, custom rules, or service presets match any domain or keyword.</small>
+            </div>
+            <div class="lookup-bar-controls">
+              <input id="blocklist-search-input" class="compact-input" placeholder="Search domain or keyword (e.g. doubleclick, tiktok, phishing)...">
+              <button id="blocklist-search-btn" type="button" class="button secondary">Search</button>
+              <button id="blocklist-search-clear" type="button" class="button secondary hidden">Clear</button>
+            </div>
+          </div>
+          <div id="blocklist-search-results" class="lookup-results-box hidden"></div>
+        </article>
+
         <!-- PROTECTION CATEGORIES CARD -->
         <article class="card protection-card">
           <div class="card-header">
@@ -621,6 +775,32 @@
 
         <!-- TAB 1: SUBSCRIPTION BLOCKLISTS -->
         <div id="blocking-lists" class="block-tab active">
+          <article class="card accent-card" id="catalog-marketplace-card">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>Curated Blocklist Marketplace (24 Verified Public Feeds)</h2>
+                  <span id="catalog-installed-badge" class="badge allowed">0/24 Installed</span>
+                </div>
+                <p>Choose from 24 battle-tested open-source DNS blocklists (OISD, HaGeZi, StevenBlack, AdGuard, Abuse.ch, Phishing Army, EasyPrivacy, Frogeye) or install a 1-click protection pack.</p>
+              </div>
+              <div class="button-row">
+                <button type="button" class="button primary catalog-pack-btn" data-pack="core">Core Pack (4)</button>
+                <button type="button" class="button secondary catalog-pack-btn" data-pack="privacy">Privacy Pro Pack (11)</button>
+                <button type="button" class="button secondary catalog-pack-btn" data-pack="malware">Malware Fortress (7)</button>
+                <button type="button" class="button secondary catalog-pack-btn" data-pack="family">Family Safe Pack (6)</button>
+              </div>
+            </div>
+            <div class="catalog-filter-bar" id="catalog-filter-bar">
+              <button type="button" class="chart-mode-btn catalog-filter-btn active" data-cat="all">All Lists (24)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="ads">Ads &amp; General (7)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="tracking">Trackers &amp; Telemetry (6)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="malware">Malware, Phishing &amp; Scams (7)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="family_social">Adult, Gambling &amp; Social (4)</button>
+            </div>
+            <div id="catalog-grid" class="catalog-grid"></div>
+          </article>
+
           <div class="content-grid blocking-layout">
             <article class="card">
               <div class="card-header">
@@ -641,7 +821,13 @@
                   <button type="button" class="btn-chip preset-feed-btn" data-name="StevenBlack Unified Hosts" data-url="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts" data-cat="ads" data-fmt="domains">+ StevenBlack Hosts</button>
                   <button type="button" class="btn-chip preset-feed-btn" data-name="AdGuard DNS Filter" data-url="https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt" data-cat="ads" data-fmt="adblock">+ AdGuard Filter</button>
                   <button type="button" class="btn-chip preset-feed-btn" data-name="URLHaus Malware Domains" data-url="https://urlhaus.abuse.ch/downloads/hostfile/" data-cat="malware" data-fmt="domains">+ URLHaus Malware</button>
-                  <button type="button" class="btn-chip preset-feed-btn" data-name="Peter Lowe Ad &amp; Tracker List" data-url="https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&amp;showintro=0&amp;mimetype=plaintext" data-cat="tracking" data-fmt="domains">+ Peter Lowe Trackers</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="Peter Lowe Ad &amp; Tracker List" data-url="https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&amp;showintro=0&amp;mimetype=plaintext" data-cat="tracking" data-fmt="domains">+ Peter Lowe Trackers</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="OISD Small" data-url="https://small.oisd.nl/domainswild2" data-cat="ads" data-fmt="domains">+ OISD Small</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="OISD Big" data-url="https://big.oisd.nl/domainswild2" data-cat="ads" data-fmt="domains">+ OISD Big</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="HaGeZi Multi PRO" data-url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt" data-cat="ads" data-fmt="domains">+ HaGeZi PRO</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="HaGeZi Threat Intelligence (TIF)" data-url="https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/tif.txt" data-cat="malware" data-fmt="domains">+ HaGeZi TIF</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="Phishing Army Extended" data-url="https://phishing.army/download/phishing_army_blocklist_extended.txt" data-cat="malware" data-fmt="domains">+ Phishing Army</button>
+                  <button type="button" class="btn-chip preset-feed-btn" data-name="EasyPrivacy Trackers" data-url="https://v.firebog.net/hosts/Easyprivacy.txt" data-cat="tracking" data-fmt="domains">+ EasyPrivacy</button>
                 </div>
               </div>
             </article>
@@ -712,7 +898,7 @@
                 </span>
                 <input id="sched-enabled" type="checkbox" class="switch-input">
               </label>
-              <div class="form-grid">
+              <div class="form-grid three-col">
                 <label class="field">
                   <span>Window Start (24h)</span>
                   <input id="sched-start" type="time" value="22:00">
@@ -721,16 +907,56 @@
                   <span>Window End (24h)</span>
                   <input id="sched-end" type="time" value="07:00">
                 </label>
+                <label class="field">
+                  <span>Target Client Profile</span>
+                  <select id="sched-profile">
+                    <option value="*">All Client Devices (*)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="sched-days-row">
+                <div class="sched-days-head">
+                  <span class="curated-label">Active Days of Week:</span>
+                  <div class="sched-day-quick">
+                    <button type="button" class="text-button sched-day-preset" data-days="mon,tue,wed,thu,fri">Weekdays</button>
+                    <button type="button" class="text-button sched-day-preset" data-days="sat,sun">Weekends</button>
+                    <button type="button" class="text-button sched-day-preset" data-days="mon,tue,wed,thu,fri,sat,sun">Every Day</button>
+                  </div>
+                </div>
+                <div class="sched-days-pills" id="sched-days-pills">
+                  <button type="button" class="day-pill active" data-day="mon">Mon</button>
+                  <button type="button" class="day-pill active" data-day="tue">Tue</button>
+                  <button type="button" class="day-pill active" data-day="wed">Wed</button>
+                  <button type="button" class="day-pill active" data-day="thu">Thu</button>
+                  <button type="button" class="day-pill active" data-day="fri">Fri</button>
+                  <button type="button" class="day-pill active" data-day="sat">Sat</button>
+                  <button type="button" class="day-pill active" data-day="sun">Sun</button>
+                </div>
               </div>
             </div>
           </article>
 
-          <article class="card">
+          <article class="card" id="presets-card">
             <div class="card-header">
               <div>
-                <h2>One-Click Service &amp; Threat Presets (12 Curated Catalogs)</h2>
-                <p>Instantly block or unblock social media, streaming services, AI crawlers, cryptominers, gaming networks, and OS telemetry.</p>
+                <div class="title-with-pill">
+                  <h2>One-Click Service &amp; Threat Presets (24 Curated Catalogs)</h2>
+                  <span id="presets-active-badge" class="badge info">0/24 Blocked</span>
+                </div>
+                <p>Instantly block or unblock social apps, video/audio streaming, gaming platforms, AI portals, dating/betting sites, cryptominers, and DoH bypass endpoints.</p>
               </div>
+              <div class="button-row">
+                <button id="presets-block-group-btn" type="button" class="button secondary">Block Shown</button>
+                <button id="presets-allow-group-btn" type="button" class="button secondary">Unblock Shown</button>
+              </div>
+            </div>
+            <div class="catalog-filter-bar" id="preset-group-bar">
+              <button type="button" class="chart-mode-btn preset-group-btn active" data-group="all">All Presets (24)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="social">Social &amp; Messaging (9)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="streaming">Video &amp; Music (5)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="gaming_ai">Gaming &amp; AI (2)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="adult_betting">Dating, Shopping &amp; Betting (3)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="security">Security &amp; Telemetry (5)</button>
             </div>
             <div id="presets-grid" class="presets-grid"></div>
           </article>
@@ -813,7 +1039,11 @@
                   <span>Target Client Profile</span>
                   <select id="rule-profile"></select>
                 </label>
-                <button class="button primary wide" type="submit">Save Custom Rule</button>
+                <div class="button-row">
+                  <button id="test-rule-btn" class="button secondary" type="button">Test Pattern</button>
+                  <button class="button primary" type="submit" style="flex:1">Save Custom Rule</button>
+                </div>
+                <div id="rule-test-result" class="info-box hidden"></div>
               </form>
             </article>
           </div>
@@ -858,6 +1088,15 @@
               </div>
             </div>
             <div id="profiles-editor" class="editor-list"></div>
+            <div class="curated-feeds-box">
+              <span class="curated-label">1-Click Client Profile Templates:</span>
+              <div class="button-row">
+                <button type="button" class="btn-chip template-profile-btn" data-id="kids" data-name="Kids Safe Profile" data-net="192.168.50.0/24" data-cats="ads,tracking,malware,adult,social">+ Kids Safe Profile</button>
+                <button type="button" class="btn-chip template-profile-btn" data-id="work" data-name="Work Focus Profile" data-net="192.168.60.0/24" data-cats="ads,tracking,malware,social">+ Work Focus Profile</button>
+                <button type="button" class="btn-chip template-profile-btn" data-id="iot" data-name="IoT Lockdown Profile" data-net="192.168.70.0/24" data-cats="ads,tracking,malware,custom">+ IoT Lockdown Profile</button>
+                <button type="button" class="btn-chip template-profile-btn" data-id="guest" data-name="Guest Wi-Fi Profile" data-net="192.168.80.0/24" data-cats="ads,tracking,malware,adult">+ Guest Wi-Fi Profile</button>
+              </div>
+            </div>
           </article>
         </div>
       </section>
@@ -947,6 +1186,10 @@
               <button type="button" class="btn-chip preset-upstream-btn" data-id="google_v4" data-name="Google DNS" data-addr="8.8.8.8" data-sni="dns.google">+ Google (8.8.8.8)</button>
               <button type="button" class="btn-chip preset-upstream-btn" data-id="adguard_v4" data-name="AdGuard DNS" data-addr="94.140.14.14" data-sni="dns.adguard-dns.com">+ AdGuard (94.140.14.14)</button>
               <button type="button" class="btn-chip preset-upstream-btn" data-id="mullvad_v4" data-name="Mullvad DNS" data-addr="194.242.2.2" data-sni="dns.mullvad.net">+ Mullvad (194.242.2.2)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="cf_security" data-name="Cloudflare Security" data-addr="1.1.1.2" data-sni="security.cloudflare-dns.com">+ Cloudflare Security (1.1.1.2)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="cf_family" data-name="Cloudflare Family" data-addr="1.1.1.3" data-sni="family.cloudflare-dns.com">+ Cloudflare Family (1.1.1.3)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="quad9_ecs" data-name="Quad9 ECS" data-addr="9.9.9.11" data-sni="dns11.quad9.net">+ Quad9 ECS (9.9.9.11)</button>
+              <button type="button" class="btn-chip preset-upstream-btn" data-id="controld_v4" data-name="ControlD Free" data-addr="76.76.2.0" data-sni="p0.freedns.controld.com">+ ControlD (76.76.2.0)</button>
             </div>
           </div>
         </article>
@@ -1014,9 +1257,37 @@
             <label class="setting-row">
               <span>
                 <strong>DNS Rebinding Protection</strong>
-                <small>Strip RFC 1918 / loopback private IP answers returned by public upstream servers.</small>
+                <small>Strip RFC 1918, loopback, and cloud-metadata private IP answers returned by public upstreams.</small>
               </span>
               <input id="rebind-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>DoH Bypass Canary Protection (use-application-dns.net)</strong>
+                <small>Signal Firefox and browsers to respect Lattice Private DNS instead of bypassing via built-in DoH.</small>
+              </span>
+              <input id="doh-canary-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>Risky TLD Phishing &amp; Malware Shield (.zip, .mov, .top, .tk)</strong>
+                <small>Block lookups to high-abuse top-level domains frequently used in phishing and archive-lure attacks.</small>
+              </span>
+              <input id="risky-tld-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>IDN Punycode Homograph Filter (xn--)</strong>
+                <small>Block Internationalized Domain Name lookalike punycode labels used in credential harvesting.</small>
+              </span>
+              <input id="punycode-toggle" type="checkbox" class="switch-input">
+            </label>
+            <label class="setting-row">
+              <span>
+                <strong>RFC 8484 &amp; RFC 8427 DNS-over-HTTPS Endpoint (/dns-query)</strong>
+                <small>Serve encrypted HTTPS DNS queries on /dns-query alongside TCP port 853 DoT.</small>
+              </span>
+              <input id="doh-enabled-toggle" type="checkbox" class="switch-input">
             </label>
             <label class="setting-row">
               <span>
@@ -1027,8 +1298,19 @@
                 <option value="nxdomain">NXDOMAIN (Standard Name Error)</option>
                 <option value="zero">Zero IP (0.0.0.0 / ::)</option>
                 <option value="refused">REFUSED (Policy Refusal)</option>
+                <option value="custom_ip">Custom Sinkhole / Block Page IP</option>
               </select>
             </label>
+            <div class="setting-row">
+              <span>
+                <strong>Custom Sinkhole IP &amp; Blocked Answer TTL</strong>
+                <small>Optional custom IPv4/IPv6 sinkhole address (when Custom Sinkhole mode is selected) and synthetic TTL (1–3600s).</small>
+              </span>
+              <div class="button-row">
+                <input id="block-custom-ip" class="compact-input" placeholder="Sinkhole IP (e.g. 192.168.1.250)">
+                <input id="block-ttl" type="number" min="1" max="3600" class="compact-input" style="max-width:105px" value="30" title="Blocked response TTL in seconds">
+              </div>
+            </div>
             <div class="setting-row">
               <span>
                 <strong>Unbound Resolver Cache</strong>
@@ -1216,6 +1498,22 @@ DNSOverTLS=yes</code>
             </div>
           </article>
 
+          <article class="card span-2 accent-card" id="vpn-doctor-card">
+            <div class="card-header">
+              <div>
+                <div class="topbar-title-row">
+                  <h2>VPN &amp; Roaming Continuity Doctor (Zero-Drop Auto-Recovery)</h2>
+                  <span id="vpn-doctor-badge" class="badge allowed">6/6 Active</span>
+                </div>
+                <p>Guarantees instant Private DNS reconnection when switching VPNs (WireGuard, OpenVPN, WARP, V2Ray) and prevents false "No internet" notifications on Android, Xiaomi/MIUI, Samsung, Oppo, Huawei, and iOS.</p>
+              </div>
+              <button id="run-vpn-doctor" type="button" class="button secondary">Verify VPN Continuity</button>
+            </div>
+            <div id="vpn-doctor-grid" class="doctor-grid">
+              <div class="empty-state">Verifying VPN &amp; captive-portal continuity safeguards...</div>
+            </div>
+          </article>
+
           <article class="card span-2">
             <div class="step-header">
               <span class="section-number">3</span>
@@ -1320,12 +1618,48 @@ DNSOverTLS=yes</code>
           </article>
         </div>
 
+        <article class="card" id="system-storage-card">
+          <div class="card-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>SQLite WAL Storage &amp; Database Maintenance</h2>
+                <span id="sys-db-badge" class="badge allowed">WAL Mode Active</span>
+              </div>
+              <p>Inspect on-disk SQLite WAL journal footprint, indexed domain counts, and run zero-downtime WAL checkpoint &amp; query optimizer passes.</p>
+            </div>
+            <button id="vacuum-db-btn" type="button" class="button secondary">Optimize &amp; Checkpoint DB</button>
+          </div>
+          <div class="mini-stats">
+            <div class="mini-stat-box">
+              <span class="mini-label">SQLite WAL Footprint</span>
+              <strong id="sys-db-size" class="mini-val">0 KB</strong>
+              <small>Database + WAL + SHM</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Stored Query Journal</span>
+              <strong id="sys-queries-count" class="mini-val">0</strong>
+              <small>Retained lookup rows</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Indexed Feed Domains</span>
+              <strong id="sys-feed-domains-count" class="mini-val">0</strong>
+              <small>Active in SQLite &amp; Bloom</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Known Client Endpoints</span>
+              <strong id="sys-devices-count" class="mini-val">0</strong>
+              <small>Discovered client IPs</small>
+            </div>
+          </div>
+        </article>
+
         <article class="card">
           <div class="card-header">
             <div>
               <h2>Policy &amp; Resolution Diagnostic Simulator</h2>
-              <p>Trace how Lattice evaluates a domain for a simulated client IP and inspect the live Unbound response.</p>
+              <p>Trace how Lattice evaluates a domain for a simulated client IP or run a multi-domain security self-test.</p>
             </div>
+            <button id="run-batch-diag-btn" type="button" class="button secondary">Run 8-Domain Security Self-Test</button>
           </div>
           <form id="diagnostic-form" class="diagnostic-form">
             <input id="diag-name" placeholder="Enter hostname to test (e.g. example.com)" required>
@@ -1341,6 +1675,7 @@ DNSOverTLS=yes</code>
             <button class="button primary" type="submit">Run Trace</button>
           </form>
           <div id="diagnostic-friendly" class="diagnostic-result hidden"></div>
+          <div id="batch-diag-results" class="table-wrap hidden"></div>
           <details id="diagnostic-raw-wrap" class="advanced-inline hidden">
             <summary>Show Raw Diagnostic JSON</summary>
             <pre id="diagnostic-result" class="log-view"></pre>
@@ -1433,7 +1768,7 @@ DNSOverTLS=yes</code>
         <article class="card account-card">
           <div>
             <h2>Administrator Session</h2>
-            <p class="muted">Lattice DNS <span id="system-version">7.0.0-gemini-sovereign</span> • Memory-resident CSRF-protected session</p>
+            <p class="muted">Lattice DNS <span id="system-version">12.0.0-gemini-singularity</span> • Memory-resident CSRF-protected session</p>
           </div>
           <button id="logout" type="button" class="button secondary">Sign Out</button>
         </article>
@@ -1508,6 +1843,63 @@ DNSOverTLS=yes</code>
         <button id="bulk-export-btn" class="button secondary" type="button">Export Current Rules (.txt)</button>
         <button id="bulk-import-submit" class="button primary" type="button">Import Rules</button>
       </div>
+    </div>
+  </div>
+
+  <!-- CLIENT DEVICE TELEMETRY INSIGHTS MODAL -->
+  <div id="device-insights-scrim" class="drawer-scrim hidden"></div>
+  <div id="device-insights-modal" class="modal-card hidden" role="dialog" aria-label="Client Device Telemetry Insights">
+    <div class="card-header">
+      <div>
+        <div class="title-with-pill">
+          <h2 id="dev-insights-title">Client Device Telemetry</h2>
+          <span id="dev-insights-badge" class="badge info">192.168.1.1</span>
+        </div>
+        <p id="dev-insights-sub">Per-device DNS query breakdown, block ratio, and top destinations.</p>
+      </div>
+      <button id="dev-insights-close" type="button" class="icon-button" aria-label="Close device insights">×</button>
+    </div>
+    <div class="dash-schedule-bar dev-mode-bar" id="dev-mode-bar">
+      <div>
+        <strong>Endpoint Policy Mode Override</strong>
+        <small id="dev-mode-status-text">Standard Policy — Following assigned profile rules</small>
+      </div>
+      <div class="button-row">
+        <button type="button" class="btn-mini-action dev-mode-action-btn" data-mode="normal" data-sec="0">Standard</button>
+        <button type="button" class="btn-mini-action dev-mode-action-btn" data-mode="bypass" data-sec="900">Bypass 15m</button>
+        <button type="button" class="btn-mini-action dev-mode-action-btn" data-mode="quarantine" data-sec="0">Quarantine (Pause)</button>
+      </div>
+    </div>
+    <div class="mini-stats" id="dev-insights-kpis">
+      <div class="mini-stat-box">
+        <span class="mini-label">Total Queries (24h)</span>
+        <strong id="dev-kpi-total" class="mini-val">0</strong>
+      </div>
+      <div class="mini-stat-box">
+        <span class="mini-label">Blocked Ratio</span>
+        <strong id="dev-kpi-blockrate" class="mini-val text-red">0.0%</strong>
+      </div>
+      <div class="mini-stat-box">
+        <span class="mini-label">Mean Latency</span>
+        <strong id="dev-kpi-latency" class="mini-val text-green">0.0 ms</strong>
+      </div>
+      <div class="mini-stat-box">
+        <span class="mini-label">Assigned Profile</span>
+        <strong id="dev-kpi-profile" class="mini-val">Default</strong>
+      </div>
+    </div>
+    <div class="content-grid two dev-insights-lists">
+      <div>
+        <strong class="curated-label">Top Allowed Domains</strong>
+        <div id="dev-top-allowed" class="ranked-list"></div>
+      </div>
+      <div>
+        <strong class="curated-label">Top Blocked Domains</strong>
+        <div id="dev-top-blocked" class="ranked-list"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="dev-insights-logs-btn" type="button" class="button primary">Open Full Query Log for Device</button>
     </div>
   </div>
 

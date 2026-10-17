@@ -314,6 +314,10 @@ def render_frpc(cfg: dict[str, Any], token: str, local_port: int) -> str:
         f"serverPort = {frp['port']}",
         "loginFailExit = false",
         "transport.tls.enable = true",
+        "transport.tcpMux = true",
+        "transport.poolCount = 4",
+        "transport.heartbeatInterval = 10",
+        "transport.heartbeatTimeout = 30",
         'log.level = "info"',
         "log.disablePrintColor = true",
     ]

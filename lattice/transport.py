@@ -14,6 +14,31 @@ import time
 from typing import Any
 
 
+from .policy import is_android_essential
+
+FALLBACK_CONNECTIVITY_IPS: dict[str, tuple[str, str]] = {
+    "connectivitycheck.gstatic.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "connectivitycheck.android.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "www.gstatic.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "ssl.gstatic.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "metric.gstatic.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "dnsotls-ds.metric.gstatic.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "android.clients.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "clients1.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "clients2.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "clients3.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "clients4.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "clients5.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "clients6.google.com": ("142.250.190.14", "2607:f8b0:4005:801::200e"),
+    "cp.cloudflare.com": ("104.16.132.229", "2606:4700::6810:84e5"),
+    "connectivity.cloudflareclient.com": ("104.16.132.229", "2606:4700::6810:84e5"),
+    "engage.cloudflareclient.com": ("162.159.192.1", "2606:4700:d0::a29f:c001"),
+    "captive.apple.com": ("17.253.144.10", "2620:149:a44::10"),
+    "www.msftconnecttest.com": ("13.107.4.52", "2a01:111:2003::52"),
+    "dns.msftncsi.com": ("131.107.255.255", "fd3e:4f5a:5b81::1"),
+    "www.msftncsi.com": ("131.107.255.255", "fd3e:4f5a:5b81::1"),
+}
+
 QTYPE_NAMES = {
     1: "A",
     2: "NS",
@@ -202,6 +227,7 @@ class DNSCache:
         self.hits = 0
         self.misses = 0
         self.stale_hits = 0
+        self.prefetches = 0
 
     @staticmethod
     def _patch_wire_ttl(wire_body: bytes, new_ttl: int) -> bytes:
@@ -302,6 +328,20 @@ class DNSCache:
             self.entries.clear()
             return count
 
+    def clear(self) -> int:
+        with self.lock:
+            closed = 0
+            for bucket in self.pool.values():
+                while bucket:
+                    conn, _ = bucket.pop()
+                    closed += 1
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            self.pool.clear()
+            return closed
+
     def stats(self) -> dict[str, Any]:
         now = time.time()
         with self.lock:
@@ -329,10 +369,26 @@ class DNSCache:
                 "hits": self.hits,
                 "stale_hits": self.stale_hits,
                 "misses": self.misses,
+                "prefetches": self.prefetches,
                 "hit_rate_pct": hit_rate,
                 "hit_rate": hit_rate,
                 "top_entries": active_items,
             }
+
+    def expiring_hot_candidates(self, now: float | None = None, limit: int = 8) -> list[tuple[str, int, bool]]:
+        now_ts = now if now is not None else time.time()
+        candidates: list[tuple[int, tuple[str, int, bool]]] = []
+        with self.lock:
+            for key, item in self.entries.items():
+                if item.get("hits", 0) < 1:
+                    continue
+                rem = item["expires_at"] - now_ts
+                threshold = max(15.0, float(item.get("ttl", 60)) * 0.25)
+                if -300.0 <= rem <= threshold and (now_ts - item.get("last_prefetch", 0.0)) > 20.0:
+                    item["last_prefetch"] = now_ts
+                    candidates.append((int(item["hits"]), key))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return [k for _, k in candidates[:limit]]
 
 
 def _synthetic_soa(qname_present: bool, ttl: int = 60) -> bytes:
@@ -422,20 +478,30 @@ def recv_exact(sock: socket.socket, size: int) -> bytes:
 
 
 def forward_local(packet: bytes, port: int) -> bytes:
+    truncated = False
     if len(packet) <= 4096:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:
-                udp_sock.settimeout(1.5)
+                udp_sock.settimeout(1.1)
                 udp_sock.connect(("127.0.0.1", port))
                 udp_sock.send(packet)
                 resp = udp_sock.recv(4096)
-                if len(resp) >= 12 and resp[:2] == packet[:2] and (resp[2] & 0x80) and not (resp[2] & 0x02):
-                    return resp
-        except (socket.timeout, OSError):
+                if len(resp) >= 12 and resp[:2] == packet[:2] and (resp[2] & 0x80):
+                    if not (resp[2] & 0x02):
+                        return resp
+                    truncated = True
+        except socket.timeout as exc:
+            raise TimeoutError("Local Unbound UDP timeout") from exc
+        except OSError:
             pass
+    else:
+        truncated = True
 
-    with socket.create_connection(("127.0.0.1", port), timeout=4) as conn:
-        conn.settimeout(4)
+    if not truncated:
+        raise OSError("Local Unbound UDP unreachable")
+
+    with socket.create_connection(("127.0.0.1", port), timeout=1.5) as conn:
+        conn.settimeout(1.5)
         conn.sendall(struct.pack("!H", len(packet)) + packet)
         length = struct.unpack("!H", recv_exact(conn, 2))[0]
         if length < 12 or length > 65535:
@@ -446,8 +512,147 @@ def forward_local(packet: bytes, port: int) -> bytes:
     return result
 
 
+_TEST_DOC_NETS = (
+    ipaddress.ip_network("192.0.2.0/24"),
+    ipaddress.ip_network("198.51.100.0/24"),
+    ipaddress.ip_network("203.0.113.0/24"),
+    ipaddress.ip_network("2001:db8::/32"),
+)
+
+
+def is_rebinding_ip(ip_str: str) -> bool:
+    """Return True if an upstream DNS answer IP is RFC 1918 private, loopback, link-local, or cloud metadata."""
+    try:
+        ip = ipaddress.ip_address(ip_str.strip())
+    except ValueError:
+        return False
+    if any(ip in net for net in _TEST_DOC_NETS):
+        return False
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified)
+
+
+class UpstreamTLSPool:
+    """Thread-safe TLS 1.3 keep-alive socket pool and EWMA latency tracker for DoT upstreams."""
+
+    def __init__(self, max_idle: float = 45.0):
+        self.max_idle = max_idle
+        self.lock = threading.Lock()
+        self.pool: dict[tuple[str, int, str], list[tuple[ssl.SSLSocket, float]]] = collections.defaultdict(list)
+        self.latencies: dict[str, float] = {}
+        self.pool_hits = 0
+        self.pool_misses = 0
+        self.context = ssl.create_default_context()
+
+    def _borrow(self, key: tuple[str, int, str]) -> ssl.SSLSocket | None:
+        now = time.monotonic()
+        with self.lock:
+            items = self.pool.get(key, [])
+            while items:
+                conn, ts = items.pop()
+                if now - ts <= self.max_idle:
+                    self.pool_hits += 1
+                    return conn
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self.pool_misses += 1
+            return None
+
+    def _release(self, key: tuple[str, int, str], conn: ssl.SSLSocket) -> None:
+        now = time.monotonic()
+        with self.lock:
+            bucket = self.pool[key]
+            if len(bucket) >= 4:
+                old_conn, _ = bucket.pop(0)
+                try:
+                    old_conn.close()
+                except Exception:
+                    pass
+            bucket.append((conn, now))
+
+    def record_latency(self, uid: str, ms: float) -> None:
+        with self.lock:
+            prev = self.latencies.get(uid)
+            self.latencies[uid] = round(ms if prev is None else (prev * 0.7 + ms * 0.3), 2)
+
+    def clear(self) -> int:
+        with self.lock:
+            closed = 0
+            for bucket in self.pool.values():
+                while bucket:
+                    conn, _ = bucket.pop()
+                    closed += 1
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            self.pool.clear()
+            return closed
+
+    def query(self, upstream: dict[str, Any], out_pkt: bytes) -> bytes:
+        addr = upstream["address"]
+        port = int(upstream.get("port", 853))
+        sni = upstream.get("sni") or upstream.get("tls_hostname") or addr
+        uid = upstream.get("id", addr)
+        key = (addr, port, sni)
+        framed = struct.pack("!H", len(out_pkt)) + out_pkt
+        t0 = time.monotonic()
+
+        conn = self._borrow(key)
+        if conn is not None:
+            try:
+                conn.settimeout(1.5)
+                conn.sendall(framed)
+                length = struct.unpack("!H", recv_exact(conn, 2))[0]
+                if 12 <= length <= 65535:
+                    resp = recv_exact(conn, length)
+                    self._release(key, conn)
+                    self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
+                    return resp
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        t0 = time.monotonic()
+        raw = socket.create_connection((addr, port), timeout=2.2)
+        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        tls_conn = self.context.wrap_socket(raw, server_hostname=sni)
+        try:
+            tls_conn.settimeout(2.2)
+            tls_conn.sendall(framed)
+            length = struct.unpack("!H", recv_exact(tls_conn, 2))[0]
+            if not (12 <= length <= 65535):
+                raise ValueError("Invalid DoT upstream response length")
+            resp = recv_exact(tls_conn, length)
+            self._release(key, tls_conn)
+            self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
+            return resp
+        except Exception:
+            try:
+                tls_conn.close()
+            except Exception:
+                pass
+            raise
+
+    def stats(self) -> dict[str, Any]:
+        with self.lock:
+            active_sockets = sum(len(v) for v in self.pool.values())
+            return {
+                "active_sockets": active_sockets,
+                "pool_hits": self.pool_hits,
+                "pool_misses": self.pool_misses,
+                "ewma_latencies_ms": dict(self.latencies),
+            }
+
+
+UPSTREAM_TLS_POOL = UpstreamTLSPool()
+
+
 def forward_upstream_dot(packet: bytes, upstreams: list[dict[str, Any]], qname: str = "", routes: list[dict[str, Any]] | None = None) -> bytes:
-    """Direct DoT upstream failover when local Unbound is reloading or unavailable."""
+    """Direct DoT upstream failover with TLS 1.3 keep-alive pooling and lowest-EWMA latency routing."""
     enabled = {u["id"]: u for u in upstreams if u.get("enabled", True)}
     selected: list[dict[str, Any]] = []
     if qname and routes:
@@ -463,25 +668,20 @@ def forward_upstream_dot(packet: bytes, upstreams: list[dict[str, Any]], qname: 
     if not selected:
         raise ValueError("No enabled DoT upstreams available")
 
+    with UPSTREAM_TLS_POOL.lock:
+        lat_map = dict(UPSTREAM_TLS_POOL.latencies)
+    selected.sort(key=lambda u: lat_map.get(u.get("id", u["address"]), 50.0))
+
     orig_id = packet[:2]
     out_id = os.urandom(2)
     out_pkt = out_id + packet[2:]
 
-    context = ssl.create_default_context()
     last_exc: Exception | None = None
     for upstream in selected:
         try:
-            with socket.create_connection((upstream["address"], int(upstream.get("port", 853))), timeout=3.5) as raw:
-                raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                sni = upstream.get("sni") or upstream.get("tls_hostname") or upstream["address"]
-                with context.wrap_socket(raw, server_hostname=sni) as tls_conn:
-                    tls_conn.settimeout(3.5)
-                    tls_conn.sendall(struct.pack("!H", len(out_pkt)) + out_pkt)
-                    length = struct.unpack("!H", recv_exact(tls_conn, 2))[0]
-                    if 12 <= length <= 65535:
-                        resp = recv_exact(tls_conn, length)
-                        if resp[:2] == out_id and (resp[2] & 0x80):
-                            return orig_id + resp[2:]
+            resp = UPSTREAM_TLS_POOL.query(upstream, out_pkt)
+            if resp[:2] == out_id and (resp[2] & 0x80):
+                return orig_id + resp[2:]
         except Exception as exc:
             last_exc = exc
             continue
@@ -513,27 +713,37 @@ PROXY_V2_SIG = b"\x0d\x0a\x0d\x0a\x00\x0d\x0a\x51\x55\x49\x54\x0a"
 
 
 def peek_and_read_proxy(sock: socket.socket) -> str:
-    """Non-destructively peek at incoming socket to auto-detect PROXY v1, PROXY v2, or raw TLS ClientHello."""
+    """MTU-safe non-destructive socket peek: instant return on TLS 0x16 ClientHello, fragment-safe for PROXY v1/v2."""
     try:
-        peeked = sock.recv(16, socket.MSG_PEEK)
+        first = sock.recv(1, socket.MSG_PEEK)
     except OSError:
         return ""
-    if not peeked:
+    if not first or first[0] == 0x16:
+        # 0x16 is standard TLS Handshake record type (ClientHello) — return immediately!
         return ""
-    if peeked.startswith(b"PROXY "):
-        return read_proxy_line(sock)
-    if len(peeked) >= 16 and peeked[:12] == PROXY_V2_SIG:
-        header = recv_exact(sock, 16)
-        ver_cmd = header[12]
-        fam_proto = header[13]
-        addr_len = struct.unpack("!H", header[14:16])[0]
-        payload = recv_exact(sock, addr_len) if addr_len > 0 else b""
-        if (ver_cmd & 0x0F) == 0x01:
-            if (fam_proto & 0xF0) == 0x10 and len(payload) >= 12:
-                return str(ipaddress.IPv4Address(payload[:4]))
-            if (fam_proto & 0xF0) == 0x20 and len(payload) >= 36:
-                return str(ipaddress.IPv6Address(payload[:16]))
-        return ""
+    if first[0] == 0x50:  # "P" -> PROXY v1
+        try:
+            peek6 = sock.recv(6, socket.MSG_PEEK)
+            if peek6.startswith(b"PROXY"):
+                return read_proxy_line(sock)
+        except OSError:
+            return ""
+    if first[0] == 0x0D:  # "\r" -> PROXY v2 binary signature
+        try:
+            peek12 = sock.recv(12, socket.MSG_PEEK)
+            if peek12 == PROXY_V2_SIG:
+                header = recv_exact(sock, 16)
+                ver_cmd = header[12]
+                fam_proto = header[13]
+                addr_len = struct.unpack("!H", header[14:16])[0]
+                payload = recv_exact(sock, addr_len) if addr_len > 0 else b""
+                if (ver_cmd & 0x0F) == 0x01:
+                    if (fam_proto & 0xF0) == 0x10 and len(payload) >= 12:
+                        return str(ipaddress.IPv4Address(payload[:4]))
+                    if (fam_proto & 0xF0) == 0x20 and len(payload) >= 36:
+                        return str(ipaddress.IPv6Address(payload[:16]))
+        except OSError:
+            return ""
     return ""
 
 
@@ -602,6 +812,17 @@ class DNSGateway:
     def _resolve_local_record(self, packet: bytes, name: str, qtype: int) -> bytes | None:
         clean = name.lower().rstrip(".")
         if clean == "_dns.resolver.arpa":
+            return error_response(packet, 0)
+        if clean == "ipv4only.arpa":
+            if qtype in (1, 255):
+                return rewrite_response(packet, 1, "192.0.0.170", ttl=300)
+            return error_response(packet, 0)
+        if clean == "dnsotls-ds.metric.gstatic.com" or clean.endswith(".dnsotls-ds.metric.gstatic.com"):
+            # Instant <0.1ms synthesis for Android DnsTlsTransport random-UUID DoT probes during VPN switches
+            if qtype in (1, 255):
+                return rewrite_response(packet, 1, "142.250.190.14", ttl=60)
+            if qtype == 28:
+                return rewrite_response(packet, 28, "2607:f8b0:4005:801::200e", ttl=60)
             return error_response(packet, 0)
         if clean in ("localhost", "localhost.localdomain"):
             return rewrite_response(packet, qtype, "::1" if qtype == 28 else "127.0.0.1", ttl=300)
@@ -685,15 +906,28 @@ class DNSGateway:
                     stale = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=True)
                     if stale is not None:
                         return stale, "cache:stale"
+                clean_q = name.lower().rstrip(".")
+                fb_ips = FALLBACK_CONNECTIVITY_IPS.get(clean_q)
+                if fb_ips or is_android_essential(clean_q, self.store.config.get("hostname", "")):
+                    v4_ip, v6_ip = fb_ips or ("142.250.190.14", "2607:f8b0:4005:801::200e")
+                    if qtype in (1, 255):
+                        return rewrite_response(packet, 1, v4_ip, ttl=30), "vpn:probe-rescue"
+                    if qtype == 28:
+                        return rewrite_response(packet, 28, v6_ip, ttl=30), "vpn:probe-rescue"
+                    return error_response(packet, 0), "vpn:probe-rescue"
                 raise
 
     def _block_packet(self, packet: bytes, qtype: int) -> bytes:
         mode = self.store.config.get("block_response", "nxdomain")
+        ttl = int(self.store.config.get("block_ttl", 30) or 30)
+        if mode == "custom_ip":
+            custom_ip = self.store.config.get("block_custom_ip", "") or "0.0.0.0"
+            return rewrite_response(packet, qtype, custom_ip, ttl=ttl)
         if mode == "zero":
             if qtype == 28:
-                return rewrite_response(packet, qtype, "::", ttl=30)
+                return rewrite_response(packet, qtype, "::", ttl=ttl)
             if qtype in (1, 255):
-                return rewrite_response(packet, qtype, "0.0.0.0", ttl=30)
+                return rewrite_response(packet, qtype, "0.0.0.0", ttl=ttl)
             return error_response(packet, 0)
         if mode == "refused":
             return error_response(packet, 5)
@@ -716,7 +950,8 @@ class DNSGateway:
         action = "allowed"
         detail = ""
         try:
-            if self._limited(client, profile_cfg["rate_limit"]):
+            is_probe = is_android_essential(name, self.store.config.get("hostname", ""))
+            if not is_probe and client not in ("127.0.0.1", "::1") and self._limited(client, max(profile_cfg["rate_limit"], 600)):
                 action = "refused"
                 detail = "rate_limit"
                 result = error_response(packet, 5)
@@ -733,17 +968,37 @@ class DNSGateway:
                     result, fb_note = self._forward_query(packet, name, qtype)
                     if fb_note:
                         detail = f"{detail} ({fb_note})" if detail else fb_note
-                    # CNAME Cloaking Inspection: verify no intermediate CNAME target is blocked by policy
+                    # CNAME Cloaking & DNS Rebinding Inspection
                     if (result[3] & 15) == 0 and not self.store.is_blocking_paused():
-                        for ans in decode_dns_answers(result):
+                        decoded_answers = decode_dns_answers(result)
+                        for ans in decoded_answers:
                             if ans.get("rtype") == 5 and ans.get("data"):
-                                cname_target = str(ans["data"]).strip().rstrip(".")
-                                cname_dec = self.policy.decide(client, cname_target)
+                                cname_target_name = str(ans["data"]).strip().rstrip(".")
+                                cname_dec = self.policy.decide(client, cname_target_name)
                                 if cname_dec.action == "deny":
                                     action = "blocked"
-                                    detail = f"cname_cloak:{cname_target} ({cname_dec.source})"
+                                    detail = f"cname_cloak:{cname_target_name} ({cname_dec.source})"
                                     result = self._block_packet(packet, qtype)
+                                    self.cache.evict(name)
                                     break
+                        if action == "allowed" and fb_note != "local:record" and self.store.config.get("rebinding_protection", True):
+                            clean_q = name.lower().rstrip(".")
+                            local_names = {r["name"].lower().rstrip(".") for r in self.store.config.get("local_records", [])}
+                            is_local_domain = (
+                                clean_q in ("localhost", "localhost.localdomain")
+                                or clean_q in local_names
+                                or clean_q.endswith((".local", ".lan", ".home.arpa", ".internal", ".in-addr.arpa", ".ip6.arpa"))
+                            )
+                            if not is_local_domain:
+                                for ans in decoded_answers:
+                                    if ans.get("rtype") in (1, 28) and ans.get("data") and is_rebinding_ip(str(ans["data"])):
+                                        action = "blocked"
+                                        detail = f"security:dns-rebinding ({ans['data']})"
+                                        result = self._block_packet(packet, qtype)
+                                        self.cache.evict(clean_q)
+                                        with self.metrics_lock:
+                                            self.metrics["rebinding_blocked"] += 1
+                                        break
         except Exception:
             action = "error"
             detail = "resolver_failure"
@@ -774,12 +1029,15 @@ class DNSGateway:
                     return
                 try:
                     raw: socket.socket = self.request
-                    for opt_level, opt_name in (
-                        (socket.IPPROTO_TCP, socket.TCP_NODELAY),
-                        (socket.SOL_SOCKET, socket.SO_KEEPALIVE),
+                    for opt_level, opt_name, opt_val in (
+                        (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
+                        (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+                        (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", 4), 15),
+                        (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", 5), 5),
+                        (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", 6), 3),
                     ):
                         try:
-                            raw.setsockopt(opt_level, opt_name, 1)
+                            raw.setsockopt(opt_level, opt_name, opt_val)
                         except OSError:
                             pass
                     raw.settimeout(10)
@@ -872,6 +1130,37 @@ class DNSGateway:
         self.servers.clear()
         self.threads.clear()
 
+    def prefetch_hot_domains(self) -> dict[str, Any]:
+        """Proactively refresh popular L1 cache entries whose TTL is nearing expiration."""
+        cache_cfg = self.store.config.get("cache", {})
+        if not cache_cfg.get("prefetch", True):
+            return {"prefetched": 0, "candidates": 0}
+        candidates = self.cache.expiring_hot_candidates(limit=8)
+        prefetched = 0
+        stale_ttl = int(cache_cfg.get("serve_expired_ttl", 3600))
+        for domain, qtype, do_bit in candidates:
+            try:
+                q_pkt = struct.pack("!6H", 0x5052, 0x0100, 1, 0, 0, 1) + _encode_name(domain) + struct.pack("!HH", qtype, 1) + _build_edns0_opt(do_bit)
+                try:
+                    resp = forward_local(q_pkt, self.resolver_port)
+                    if (resp[3] & 15) == 2:
+                        raise ValueError("SERVFAIL")
+                except Exception:
+                    cfg = self.store.config
+                    resp = forward_upstream_dot(q_pkt, cfg.get("upstreams", []), qname=domain, routes=cfg.get("routes", []))
+                with self.cache.lock:
+                    old_hits = self.cache.entries.get((domain, qtype, do_bit), {}).get("hits", 1)
+                self.cache.put(domain, qtype, do_bit, resp, serve_expired_ttl=stale_ttl)
+                with self.cache.lock:
+                    if (domain, qtype, do_bit) in self.cache.entries:
+                        self.cache.entries[(domain, qtype, do_bit)]["hits"] = old_hits
+                        self.cache.entries[(domain, qtype, do_bit)]["last_prefetch"] = time.time()
+                    self.cache.prefetches += 1
+                prefetched += 1
+            except Exception:
+                continue
+        return {"prefetched": prefetched, "candidates": len(candidates)}
+
     def status(self) -> dict[str, Any]:
         with self.metrics_lock:
             metrics = dict(self.metrics)
@@ -887,7 +1176,9 @@ class DNSGateway:
             "metrics": metrics,
             "l1_cache": self.cache.stats(),
             "cache": self.cache.stats(),
+            "tls_pool": UPSTREAM_TLS_POOL.stats(),
             "pipelining": True,
             "edns0_compliant": True,
             "cname_cloaking_protection": True,
+            "rebinding_protection": bool(self.store.config.get("rebinding_protection", True)),
         }

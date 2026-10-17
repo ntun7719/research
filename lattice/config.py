@@ -15,8 +15,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "dnssec": True,
     "edns_buffer_size": 1232,
     "block_response": "nxdomain",
+    "block_custom_ip": "",
+    "block_ttl": 30,
     "safesearch": False,
     "rebinding_protection": True,
+    "block_doh_canary": True,
+    "block_risky_tlds": False,
+    "block_punycode": False,
+    "doh_enabled": True,
     "privacy": {"mode": "balanced", "retention_days": 7},
     "cache": {
         "rrset_mb": 96,
@@ -150,8 +156,21 @@ def validate_config(raw: Any) -> dict[str, Any]:
     cfg["edns_buffer_size"] = integer(cfg["edns_buffer_size"], 512, 4096, "edns_buffer_size")
     cfg["safesearch"] = bool(cfg.get("safesearch", False))
     cfg["rebinding_protection"] = bool(cfg.get("rebinding_protection", True))
-    if cfg["block_response"] not in ("nxdomain", "refused", "zero"):
-        raise ValueError("block_response must be nxdomain, refused or zero")
+    cfg["block_doh_canary"] = bool(cfg.get("block_doh_canary", True))
+    cfg["block_risky_tlds"] = bool(cfg.get("block_risky_tlds", False))
+    cfg["block_punycode"] = bool(cfg.get("block_punycode", False))
+    cfg["doh_enabled"] = bool(cfg.get("doh_enabled", True))
+    if cfg["block_response"] not in ("nxdomain", "refused", "zero", "custom_ip"):
+        raise ValueError("block_response must be nxdomain, refused, zero or custom_ip")
+    cfg["block_ttl"] = integer(int(cfg.get("block_ttl", 30)), 1, 3600, "block_ttl")
+    raw_custom_ip = str(cfg.get("block_custom_ip", "") or "").strip()
+    if raw_custom_ip:
+        try:
+            cfg["block_custom_ip"] = str(ipaddress.ip_address(raw_custom_ip))
+        except ValueError as exc:
+            raise ValueError("block_custom_ip must be a valid IPv4 or IPv6 address") from exc
+    else:
+        cfg["block_custom_ip"] = "0.0.0.0" if cfg["block_response"] == "custom_ip" else "" 
 
     privacy = cfg["privacy"]
     if not isinstance(privacy, dict) or set(privacy) != {"mode", "retention_days"}:
