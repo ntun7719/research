@@ -1316,5 +1316,24 @@ class FlagshipV5Tests(unittest.TestCase):
         self.assertEqual(dash["profile_stats"][0]["total"], 2)
 
 
+    def test_update_config_and_dns_cache_clear(self):
+        from lattice.app import Lattice
+        from lattice.transport import rewrite_response
+
+        app = Lattice(self.tmp.name, resolver_port=15583, dot_port=18923, frp_local_port=18924)
+        try:
+            q_pkt = _question("cacheclear.example.com", ident=0x9999)
+            app.gateway.cache.put("cacheclear.example.com", 1, True, rewrite_response(q_pkt, 1, "93.184.216.34", ttl=60))
+            self.assertEqual(app.gateway.cache.stats()["entries"], 1)
+
+            cfg = copy.deepcopy(app.store.config)
+            cfg["hostname"] = "dns.test"
+            updated = app.update_config({"config": cfg, "secrets": {}})
+            self.assertEqual(updated["hostname"], "dns.test")
+            self.assertEqual(app.gateway.cache.stats()["entries"], 0)
+        finally:
+            app.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()

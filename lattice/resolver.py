@@ -82,7 +82,7 @@ class ResolverManager:
             "    access-control: ::1 allow",
             '    username: ""',
             '    chroot: ""',
-            f'    directory: "{self.root}"',
+            '    directory: ""',
             '    pidfile: ""',
             "    use-syslog: no",
             '    logfile: ""',
@@ -214,6 +214,16 @@ class ResolverManager:
             detail = (check.stdout + check.stderr).strip()
             raise ValueError("Resolver configuration validation failed: " + detail[-400:])
         with self.lock:
+            if (
+                self.process is not None
+                and self.process.poll() is None
+                and self.path.exists()
+                and self.path.read_text() == text
+            ):
+                candidate.unlink(missing_ok=True)
+                self.embedded = False
+                self.error = ""
+                return
             self.stop()
             atomic_write(self.path, text)
             candidate.unlink(missing_ok=True)

@@ -1058,7 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
                 closed_sockets = UPSTREAM_TLS_POOL.clear()
                 evicted_cache = self.app.gateway.cache.clear()
                 try:
-                    self.app.resolver.reload()
+                    self.app.resolver.control("reload")
                 except Exception:
                     pass
                 self.app.store.audit("Upstream TLS pool & resolver reconnected", f"closed_pool={closed_sockets} cache_cleared={evicted_cache}")
@@ -1295,7 +1295,7 @@ class Handler(BaseHTTPRequestHandler):
                         cfg[k] = bool(v)
                         changed.append(f"{k}={bool(v)}")
                 if "dnssec" in body or "rebinding_protection" in body:
-                    self.app.update_config(cfg)
+                    self.app.update_config({"config": cfg, "secrets": {}})
                 else:
                     self.app.store.set_config(cfg)
                     self.app.policy.compile()
@@ -1475,6 +1475,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/frp/restart":
                 return self._json(202, self.app.jobs.launch("frp_restart", self.app.frp.apply))
             if path == "/api/cache/evict":
+                body = self._body()
                 domain = str(body.get("domain", "")).strip()
                 removed = self.app.gateway.cache.evict(domain) if domain else 0
                 return self._json(200, {"ok": True, "evicted": removed, "domain": domain})

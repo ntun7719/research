@@ -328,20 +328,6 @@ class DNSCache:
             self.entries.clear()
             return count
 
-    def clear(self) -> int:
-        with self.lock:
-            closed = 0
-            for bucket in self.pool.values():
-                while bucket:
-                    conn, _ = bucket.pop()
-                    closed += 1
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-            self.pool.clear()
-            return closed
-
     def stats(self) -> dict[str, Any]:
         now = time.time()
         with self.lock:
@@ -722,12 +708,7 @@ def peek_and_read_proxy(sock: socket.socket) -> str:
         # 0x16 is standard TLS Handshake record type (ClientHello) — return immediately!
         return ""
     if first[0] == 0x50:  # "P" -> PROXY v1
-        try:
-            peek6 = sock.recv(6, socket.MSG_PEEK)
-            if peek6.startswith(b"PROXY"):
-                return read_proxy_line(sock)
-        except OSError:
-            return ""
+        return read_proxy_line(sock)
     if first[0] == 0x0D:  # "\r" -> PROXY v2 binary signature
         try:
             peek12 = sock.recv(12, socket.MSG_PEEK)

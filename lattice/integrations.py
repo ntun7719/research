@@ -314,10 +314,6 @@ def render_frpc(cfg: dict[str, Any], token: str, local_port: int) -> str:
         f"serverPort = {frp['port']}",
         "loginFailExit = false",
         "transport.tls.enable = true",
-        "transport.tcpMux = true",
-        "transport.poolCount = 4",
-        "transport.heartbeatInterval = 10",
-        "transport.heartbeatTimeout = 30",
         'log.level = "info"',
         "log.disablePrintColor = true",
     ]
@@ -365,7 +361,8 @@ class FRPSupervisor:
             verify = subprocess.run([frpc_bin, "verify", "-c", str(candidate)], capture_output=True, text=True, timeout=10)
             candidate.unlink(missing_ok=True)
             if verify.returncode:
-                raise ValueError("FRP configuration validation failed")
+                detail = (verify.stdout + verify.stderr).strip()
+                raise ValueError("FRP configuration validation failed: " + detail[-300:])
             self.stop()
             atomic_write(self.path, text)
             self.process = subprocess.Popen(
