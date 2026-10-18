@@ -1541,6 +1541,19 @@ class FlagshipV5Tests(unittest.TestCase):
                 # Return a short 20s TTL from upstream; DNSCache must enforce 180s floor for streaming media
                 return rewrite_response(pkt, 1, "142.250.190.206", ttl=20)
 
+            submitted = []
+            submit_errors = []
+            real_submit = app.gateway.prefetch_pool.submit
+
+            def observed_submit(func, *args, **kwargs):
+                submitted.append(getattr(func, "__name__", repr(func)))
+                try:
+                    return real_submit(func, *args, **kwargs)
+                except Exception as exc:
+                    submit_errors.append(repr(exc))
+                    raise
+
+            app.gateway.prefetch_pool.submit = observed_submit
             with patch("lattice.transport.forward_upstream_dot", side_effect=fake_dot):
                 q_rr1 = _question("rr1---sn-i3b7kn7d.googlevideo.com", ident=0x7102)
                 resp_rr1, _ = app.gateway._handle_query_core(q_rr1, "192.168.1.50", "dot")
@@ -1558,6 +1571,8 @@ class FlagshipV5Tests(unittest.TestCase):
                     f"prewarm diagnostics: upstream_calls={queried_upstreams!r}, "
                     f"pop_keys={app.gateway._prewarmed_pops!r}, "
                     f"cache_keys={list(app.gateway.cache.entries)!r}, "
+                    f"submitted={submitted!r}, submit_errors={submit_errors!r}, "
+                    f"thread_count={len(app.gateway.prefetch_pool._threads)}, "
                     f"rr1_qname={q_rr1.hex()}",
                 )
                 self.assertEqual(tag_rr2, "cache:l1")
