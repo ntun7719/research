@@ -1414,5 +1414,91 @@ class FlagshipV5Tests(unittest.TestCase):
             self.assertEqual(resp[3] & 15, 0)
 
 
+    def test_cloudflare_sync_auto_frpc_target_and_inline_token(self):
+        from unittest.mock import patch
+        from lattice.app import Lattice
+
+        app = Lattice(self.tmp.name, resolver_port=15595, dot_port=18941, frp_local_port=18942)
+        try:
+            calls = []
+
+            def fake_cf_request(self_cf, method, path, payload=None):
+                calls.append((method, path, payload))
+                if path.startswith("/zones?"):
+                    return [{"id": "zone-123"}]
+                if method == "GET" and "/dns_records?" in path:
+                    # Simulate an old conflicting A record that must be replaced by CNAME to frpc server
+                    return [{"id": "old-a-rec", "type": "A", "name": "dns.example.com", "content": "198.51.100.1"}]
+                if method == "DELETE":
+                    return {"id": "old-a-rec"}
+                if method == "POST":
+                    return {"id": "new-cname-rec", **payload}
+                return {}
+
+            with patch("lattice.integrations.CloudflareDNS.request", new=fake_cf_request):
+                rec = app.sync_cloudflare({
+                    "hostname": "dns.example.com",
+                    "frp_server": "frp.edge.example.com",
+                    "cloudflare_token": "cf-live-token-xyz",
+                })
+                self.assertEqual(rec["type"], "CNAME")
+                self.assertEqual(rec["name"], "dns.example.com")
+                self.assertEqual(rec["content"], "frp.edge.example.com")
+                self.assertEqual(app.store.secret("cloudflare"), "cf-live-token-xyz")
+                self.assertEqual(app.store.config["public_target"], "frp.edge.example.com")
+                self.assertTrue(any(m == "DELETE" for m, _, _ in calls))
+        finally:
+            app.shutdown()
+
+    def test_0x20_question_case_preservation_and_do_bit_cache_sharing(self):
+        from lattice.transport import DNSCache, rewrite_response, _parse_question_section
+
+        cache = DNSCache(max_entries=128)
+        q_lower = _question("mixedcase.example.com", ident=0x6001)
+        resp_lower = rewrite_response(q_lower, 1, "203.0.113.55", ttl=120)
+        # Store with do_bit=True
+        cache.put("mixedcase.example.com", 1, True, resp_lower)
+
+        # Query with mixed 0x20 case and do_bit=False!
+        q_mixed = (
+            struct.pack("!6H", 0x6002, 0x0100, 1, 0, 0, 0)
+            + b"\x09MiXeDcAsE\x07ExAmPlE\x03cOm\x00"
+            + struct.pack("!HH", 1, 1)
+        )
+        _, _, q_end, _, _ = _parse_question_section(q_mixed, allow_response=False)
+        hit, tag, _ = cache.get_swr("mixedcase.example.com", 1, False, q_mixed[:2], swr_enabled=True, query_question=q_mixed[12:q_end])
+        self.assertIsNotNone(hit)
+        self.assertEqual(tag, "cache:l1")
+        self.assertEqual(hit[:2], b"\x60\x02")
+        # Verify exact 0x20 mixed-case question bytes were preserved in the cached response
+        self.assertEqual(hit[12:q_end], q_mixed[12:q_end])
+
+    def test_persistent_navigation_and_single_screen_subtabs(self):
+        from pathlib import Path
+        static_dir = Path(__file__).resolve().parent.parent / "lattice" / "static"
+        html = (static_dir / "index.html").read_text(encoding="utf-8")
+        js = (static_dir / "app.js").read_text(encoding="utf-8")
+        css = (static_dir / "app.css").read_text(encoding="utf-8")
+
+        # Verify page & sub-tab persistence across browser refresh
+        self.assertIn("lattice_active_page", js)
+        self.assertIn("lattice_subtab_", js)
+        self.assertIn("resolveSavedNavigation", js)
+        self.assertIn("parseHashNavigation", js)
+        self.assertIn("switchPageSubTab", js)
+        self.assertIn("window.sessionStorage", js)
+        self.assertIn("window.name", js)
+
+        # Verify single-screen sub-tabs across Dashboard, Blocking, DNS, Private, and System
+        for sub_id in [
+            "dashboard-subnav", "blocking-subnav", "dns-subnav", "private-subnav", "system-subnav",
+            "blocking-lists", "blocking-marketplace", "blocking-rules", "blocking-presets", "blocking-devices",
+            "density-toggle", "scroll-top-btn"
+        ]:
+            self.assertIn(f'id="{sub_id}"', html)
+        self.assertIn('html[data-density="compact"]', css)
+
+
+
 if __name__ == "__main__":
     unittest.main()

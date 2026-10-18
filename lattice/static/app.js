@@ -1,8 +1,33 @@
 function safeGetStorage(key) {
-  try { return window.localStorage ? window.localStorage.getItem(key) : null; } catch (_) { return null; }
+  try {
+    if (window.localStorage) {
+      const v = window.localStorage.getItem(key);
+      if (v !== null) return v;
+    }
+  } catch (_) {}
+  try {
+    if (window.sessionStorage) {
+      const v = window.sessionStorage.getItem(key);
+      if (v !== null) return v;
+    }
+  } catch (_) {}
+  try {
+    if (window.name && window.name.startsWith("{")) {
+      const obj = JSON.parse(window.name);
+      if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+    }
+  } catch (_) {}
+  return null;
 }
 function safeSetStorage(key, val) {
-  try { if (window.localStorage) window.localStorage.setItem(key, val); } catch (_) {}
+  const strVal = String(val);
+  try { if (window.localStorage) window.localStorage.setItem(key, strVal); } catch (_) {}
+  try { if (window.sessionStorage) window.sessionStorage.setItem(key, strVal); } catch (_) {}
+  try {
+    const obj = (window.name && window.name.startsWith("{")) ? JSON.parse(window.name) : {};
+    obj[key] = strVal;
+    window.name = JSON.stringify(obj);
+  } catch (_) {}
 }
 const state = {
   csrf: "",
@@ -16,6 +41,13 @@ const state = {
   presets: [],
   queries: [],
   page: "dashboard",
+  subTabs: {
+    dashboard: "overview",
+    blocking: "lists",
+    dns: "upstreams",
+    private: "config",
+    system: "settings"
+  },
   version: "",
   livePolling: true,
   timeWindow: 86400,
@@ -157,9 +189,14 @@ async function bootstrap() {
     return;
   }
 
+  const nav = resolveSavedNavigation();
+  switchPage(nav.page, nav.subTab, false);
   $("#auth").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   await loadAll();
+  if (state.page === "queries") loadQueries().catch(() => {});
+  if (state.page === "private") { loadAndroidDoctor(); loadVpnDoctor(); loadQrCode("doh"); }
+  if (state.page === "system") loadAudit();
 }
 
 async function loadAll() {
@@ -1202,7 +1239,7 @@ function openQueryDrawer(query) {
   if (testBtn) {
     testBtn.onclick = () => {
       closeQueryDrawer();
-      switchPage("system");
+      switchPage("system", "diagnostics");
       $("#diag-name").value = query.domain;
       $("#diag-type").value = String(query.qtype || 1);
       $("#diagnostic-form").dispatchEvent(new Event("submit"));
@@ -1871,7 +1908,7 @@ function renderPrivateForm() {
   if (!cfg) return;
   $("#private-hostname").value = cfg.hostname || "";
   $("#private-email").value = cfg.email || "";
-  $("#private-target").value = cfg.public_target || "";
+  $("#private-target").value = cfg.public_target || (cfg.frp && cfg.frp.server) || "";
   $("#cloudflare-token").value = "";
   $("#cloudflare-token-state").textContent = state.secrets.cloudflare
     ? "Encrypted Cloudflare token is saved. Leave blank to keep it."
@@ -1908,9 +1945,16 @@ function renderPrivateStatus() {
   if (!s || !state.config) return;
 
   const cert = s.tls || {};
+  const dnsRec = s.dns_record || state.dnsRecord || null;
   const certCard = $("#certificate-card");
   if (certCard) {
+    const syncText = dnsRec && dnsRec.name
+      ? `${dnsRec.type || "DNS"} ${dnsRec.name} → ${dnsRec.content || ""}`
+      : (state.config.public_target || (state.config.frp && state.config.frp.server)
+          ? `Ready to sync → ${state.config.public_target || state.config.frp.server}`
+          : "Not synced yet");
     certCard.innerHTML =
+      detailLine("Cloudflare DNS Record", syncText) +
       detailLine("Certificate State", cert.valid ? "Valid & Active" : (cert.error || "Not installed")) +
       detailLine("Covered Hostname (SAN)", cert.hostname || state.config.hostname || "Not configured") +
       detailLine("Expiration Date", cert.expires ? when(cert.expires) : "Not available") +
@@ -2024,10 +2068,110 @@ async function saveConfig(config, secrets, message) {
   toast(message || "Configuration saved and applied");
 }
 
-function switchPage(target) {
-  state.page = target;
-  $$(".page").forEach(page => page.classList.toggle("active", page.id === "page-" + target));
-  $$(".nav-item, .mob-nav-btn").forEach(item => item.classList.toggle("active", item.dataset.page === target));
+const VALID_PAGES = ["dashboard", "queries", "blocking", "dns", "private", "system"];
+const DEFAULT_SUBTABS = {
+  dashboard: "overview",
+  blocking: "lists",
+  dns: "upstreams",
+  private: "config",
+  system: "settings"
+};
+const VALID_SUBTABS = {
+  dashboard: ["overview", "shields", "domains", "topology"],
+  blocking: ["lists", "marketplace", "rules", "presets", "devices"],
+  dns: ["upstreams", "security", "cache", "records"],
+  private: ["config", "frp", "guides", "doctors"],
+  system: ["settings", "diagnostics", "audit"]
+};
+
+function parseHashNavigation() {
+  const raw = String(window.location.hash || "").replace(/^#\/?/, "").trim().toLowerCase();
+  if (!raw) return null;
+  const parts = raw.split("/");
+  const page = parts[0];
+  const sub = parts[1] || null;
+  if (!VALID_PAGES.includes(page)) return null;
+  const validSubs = VALID_SUBTABS[page] || [];
+  return {
+    page,
+    subTab: validSubs.includes(sub) ? sub : null
+  };
+}
+
+function resolveSavedNavigation() {
+  const fromHash = parseHashNavigation();
+  if (fromHash) {
+    const savedSub = safeGetStorage("lattice_subtab_" + fromHash.page);
+    const validSubs = VALID_SUBTABS[fromHash.page] || [];
+    const subTab = fromHash.subTab || (validSubs.includes(savedSub) ? savedSub : (DEFAULT_SUBTABS[fromHash.page] || null));
+    return { page: fromHash.page, subTab };
+  }
+  const savedPage = safeGetStorage("lattice_active_page");
+  const page = VALID_PAGES.includes(savedPage) ? savedPage : "dashboard";
+  const savedSub = safeGetStorage("lattice_subtab_" + page);
+  const validSubs = VALID_SUBTABS[page] || [];
+  const subTab = validSubs.includes(savedSub) ? savedSub : (DEFAULT_SUBTABS[page] || null);
+  return { page, subTab };
+}
+
+function updateLocationHash(pageName, subTab) {
+  const defSub = DEFAULT_SUBTABS[pageName];
+  const nextHash = "#" + pageName + (subTab && subTab !== defSub ? "/" + subTab : "");
+  try {
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", nextHash);
+    }
+  } catch (_) {}
+}
+
+function switchPageSubTab(pageName, subTab, skipHistory) {
+  const allowed = VALID_SUBTABS[pageName];
+  if (!allowed || !allowed.length) return;
+  const saved = safeGetStorage("lattice_subtab_" + pageName);
+  const resolved = allowed.includes(subTab)
+    ? subTab
+    : (allowed.includes(saved) ? saved : DEFAULT_SUBTABS[pageName]);
+  state.subTabs = state.subTabs || {};
+  state.subTabs[pageName] = resolved;
+  safeSetStorage("lattice_subtab_" + pageName, resolved);
+
+  if (pageName === "blocking") {
+    $$("#page-blocking .subnav-item[data-block-tab]").forEach(item => {
+      item.classList.toggle("active", item.dataset.blockTab === resolved);
+    });
+    allowed.forEach(tabId => {
+      const pane = $("#blocking-" + tabId);
+      if (pane) pane.classList.toggle("active", tabId === resolved);
+    });
+  } else {
+    $$('.page-subtab-btn[data-page-sub="' + pageName + '"]').forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.subtab === resolved);
+    });
+    $$('.sub-pane[data-page-pane="' + pageName + '"]').forEach(pane => {
+      pane.classList.toggle("active", pane.dataset.pane === resolved);
+    });
+  }
+
+  if (!skipHistory && state.page === pageName) {
+    updateLocationHash(pageName, resolved);
+  }
+}
+
+function switchPage(target, subTab, skipHistory) {
+  const resolvedTarget = VALID_PAGES.includes(target) ? target : "dashboard";
+  state.page = resolvedTarget;
+  safeSetStorage("lattice_active_page", resolvedTarget);
+
+  $$(".page").forEach(page => page.classList.toggle("active", page.id === "page-" + resolvedTarget));
+  $$(".nav-item, .mob-nav-btn").forEach(item => item.classList.toggle("active", item.dataset.page === resolvedTarget));
+
+  if (VALID_SUBTABS[resolvedTarget]) {
+    switchPageSubTab(resolvedTarget, subTab || (state.subTabs && state.subTabs[resolvedTarget]), true);
+  }
+
+  if (!skipHistory) {
+    updateLocationHash(resolvedTarget, state.subTabs && state.subTabs[resolvedTarget]);
+  }
 
   const titles = {
     dashboard: ["Dashboard", "Real-time encrypted DNS telemetry, policy enforcement, and upstream health."],
@@ -2038,16 +2182,19 @@ function switchPage(target) {
     system: ["System", "Privacy controls, cache sizing, resolution diagnostics, Prometheus metrics, backups, and security audit logs."]
   };
 
-  const info = titles[target] || [target, ""];
-  $("#page-title").textContent = info[0];
-  $("#page-description").textContent = info[1];
+  const info = titles[resolvedTarget] || [resolvedTarget, ""];
+  if ($("#page-title")) $("#page-title").textContent = info[0];
+  if ($("#page-description")) $("#page-description").textContent = info[1];
 
   closeMobileNav();
   closeQueryDrawer();
+  try { window.scrollTo(0, 0); } catch (_) {}
 
-  if (target === "queries") loadQueries().catch(err => toast(err.message, true));
-  if (target === "private") { loadAndroidDoctor(); loadVpnDoctor(); loadQrCode("doh"); }
-  if (target === "system") loadAudit();
+  if (state.authenticated) {
+    if (resolvedTarget === "queries") loadQueries().catch(err => toast(err.message, true));
+    if (resolvedTarget === "private") { loadAndroidDoctor(); loadVpnDoctor(); loadQrCode("doh"); }
+    if (resolvedTarget === "system") loadAudit();
+  }
 }
 
 function openMobileNav() {
@@ -2065,16 +2212,55 @@ function setTheme(theme) {
   safeSetStorage("lattice_theme", theme);
 }
 
+function setDensity(density) {
+  const mode = density === "spacious" ? "spacious" : "compact";
+  document.documentElement.dataset.density = mode;
+  safeSetStorage("lattice_density", mode);
+  if ($("#density-toggle-label")) {
+    $("#density-toggle-label").textContent = mode === "compact" ? "Compact" : "Spacious";
+  }
+}
+
 /* ==================== ONE-TIME EVENT BINDINGS ==================== */
 
 function bindEvents() {
   const savedTheme = safeGetStorage("lattice_theme") || "dark";
   setTheme(savedTheme === "light" ? "light" : "dark");
 
+  const savedDensity = safeGetStorage("lattice_density") || "compact";
+  setDensity(savedDensity);
+
+  const initialNav = resolveSavedNavigation();
+  switchPage(initialNav.page, initialNav.subTab, true);
+
+  window.addEventListener("hashchange", () => {
+    const parsed = parseHashNavigation();
+    if (parsed) {
+      switchPage(parsed.page, parsed.subTab || undefined, true);
+    }
+  });
+
   $("#theme-toggle")?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "dark";
     setTheme(current === "dark" ? "light" : "dark");
   });
+
+  $("#density-toggle")?.addEventListener("click", () => {
+    const current = document.documentElement.dataset.density || "compact";
+    const next = current === "compact" ? "spacious" : "compact";
+    setDensity(next);
+    toast(next === "compact" ? "Compact single-screen density enabled" : "Spacious layout density enabled");
+  });
+
+  const scrollTopBtn = $("#scroll-top-btn");
+  if (scrollTopBtn) {
+    window.addEventListener("scroll", () => {
+      scrollTopBtn.classList.toggle("hidden", window.scrollY < 220);
+    }, { passive: true });
+    scrollTopBtn.addEventListener("click", () => {
+      window.scrollTo(0, 0);
+    });
+  }
 
   $$(".nav-item, .mob-nav-btn").forEach(button => {
     button.addEventListener("click", () => switchPage(button.dataset.page));
@@ -2160,6 +2346,10 @@ function bindEvents() {
       state.authenticated = true;
       state.csrf = result.csrf || "";
       $("#password").value = "";
+      if (!parseHashNavigation()) {
+        safeSetStorage("lattice_active_page", "dashboard");
+        safeSetStorage("lattice_subtab_dashboard", "overview");
+      }
       await bootstrap();
     } catch (error) {
       $("#auth-error").textContent = error.message;
@@ -2242,14 +2432,16 @@ function bindEvents() {
     }
   });
 
-  // Blocking Sub-navigation
-  $$(".subnav-item").forEach(button => {
+  // Blocking & Multi-Page Sub-navigation
+  $$("#page-blocking .subnav-item[data-block-tab]").forEach(button => {
     button.addEventListener("click", () => {
-      $$(".subnav-item").forEach(item => item.classList.toggle("active", item === button));
-      const tab = button.dataset.blockTab;
-      $("#blocking-lists").classList.toggle("active", tab === "lists");
-      $("#blocking-rules").classList.toggle("active", tab === "rules");
-      $("#blocking-devices").classList.toggle("active", tab === "devices");
+      switchPageSubTab("blocking", button.dataset.blockTab, false);
+    });
+  });
+
+  $$(".page-subtab-btn[data-page-sub]").forEach(button => {
+    button.addEventListener("click", () => {
+      switchPageSubTab(button.dataset.pageSub, button.dataset.subtab, false);
     });
   });
 
@@ -2945,41 +3137,153 @@ function bindEvents() {
   $("#frp-enabled")?.addEventListener("change", toggleFrpFields);
   $("#frp-auth")?.addEventListener("change", toggleFrpFields);
 
-  $("#save-private")?.addEventListener("click", async () => {
+  // Auto-sync Public Target with FRP Server Address as the user types in #frp-server
+  let lastFrpVal = ($("#frp-server") ? $("#frp-server").value : "").trim();
+  $("#frp-server")?.addEventListener("input", () => {
+    const curFrp = ($("#frp-server")?.value || "").trim();
+    const targetInput = $("#private-target");
+    if (targetInput && (!targetInput.value.trim() || targetInput.value.trim() === lastFrpVal)) {
+      targetInput.value = curFrp;
+    }
+    lastFrpVal = curFrp;
+  });
+
+  const collectPrivateInputs = () => {
+    const hostnameVal = ($("#private-hostname")?.value || "").trim();
+    const emailVal = ($("#private-email")?.value || "").trim();
+    const frpServerVal = ($("#frp-server")?.value || "").trim() || (state.config && state.config.frp && state.config.frp.server) || "";
+    let targetVal = ($("#private-target")?.value || "").trim();
+    if (!targetVal && frpServerVal) {
+      targetVal = frpServerVal;
+      if ($("#private-target")) $("#private-target").value = targetVal;
+    }
+    const cfTokenVal = ($("#cloudflare-token")?.value || "").trim();
+    const frpTokenVal = ($("#frp-token")?.value || "").trim();
+    return { hostnameVal, emailVal, targetVal, frpServerVal, cfTokenVal, frpTokenVal };
+  };
+
+  const runCloudflareSyncNow = async (silentIfMissing = false) => {
+    const btn = $("#sync-cloudflare");
+    const { hostnameVal, emailVal, targetVal, frpServerVal, cfTokenVal } = collectPrivateInputs();
+    const hasToken = Boolean(cfTokenVal || (state.secrets && state.secrets.cloudflare));
+    if (silentIfMissing && (!hostnameVal || !targetVal || !hasToken)) {
+      return null;
+    }
     try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Syncing Cloudflare...";
+      }
+      const res = await api("/api/cloudflare/sync", {
+        method: "POST",
+        body: {
+          sync_now: true,
+          hostname: hostnameVal,
+          email: emailVal,
+          public_target: targetVal,
+          frp_server: frpServerVal,
+          cloudflare_token: cfTokenVal
+        }
+      });
+      if (cfTokenVal) {
+        state.secrets.cloudflare = true;
+        if ($("#cloudflare-token")) $("#cloudflare-token").value = "";
+        if ($("#cloudflare-token-state")) {
+          $("#cloudflare-token-state").textContent = "Encrypted Cloudflare token is saved. Leave blank to keep it.";
+        }
+      }
+      if (res.config) state.config = res.config;
+      if (res.record) state.dnsRecord = res.record;
+      await refreshStatus();
+      renderPrivateForm();
+      renderPrivateStatus();
+      const rec = res.record || {};
+      toast("Synced Cloudflare " + (rec.type || "DNS") + ": " + (rec.name || hostnameVal) + " → " + (rec.content || targetVal));
+      return res;
+    } catch (error) {
+      toast(error.message, true);
+      return null;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Sync Cloudflare Record";
+      }
+    }
+  };
+
+  const savePrivateAndSync = async () => {
+    try {
+      const { hostnameVal, emailVal, targetVal, frpServerVal, cfTokenVal, frpTokenVal } = collectPrivateInputs();
       const cfg = deepCopy(state.config);
-      cfg.hostname = $("#private-hostname").value.trim();
-      cfg.email = $("#private-email").value.trim();
-      cfg.public_target = $("#private-target").value.trim();
+      cfg.hostname = hostnameVal;
+      cfg.email = emailVal;
+      cfg.public_target = targetVal;
       cfg.frp.enabled = $("#frp-enabled").checked;
-      cfg.frp.server = $("#frp-server").value.trim();
+      cfg.frp.server = ($("#frp-server")?.value || "").trim();
       cfg.frp.port = Number($("#frp-port").value || 7000);
       cfg.frp.auth = $("#frp-auth").value;
       cfg.frp.remote_port = 853;
       const secrets = {};
-      if ($("#cloudflare-token").value.trim()) secrets.cloudflare = $("#cloudflare-token").value.trim();
-      if ($("#frp-token").value.trim()) secrets.frp = $("#frp-token").value.trim();
+      if (cfTokenVal) secrets.cloudflare = cfTokenVal;
+      if (frpTokenVal) secrets.frp = frpTokenVal;
       await saveConfig(cfg, secrets, "Private DNS configuration saved");
+      if (hostnameVal && targetVal && (cfTokenVal || (state.secrets && state.secrets.cloudflare))) {
+        await runCloudflareSyncNow(true);
+      }
     } catch (error) {
       toast(error.message, true);
     }
+  };
+
+  $("#save-private")?.addEventListener("click", savePrivateAndSync);
+
+  [
+    "#private-hostname",
+    "#private-email",
+    "#private-target",
+    "#cloudflare-token",
+    "#frp-server",
+    "#frp-port",
+    "#frp-token"
+  ].forEach(sel => {
+    $(sel)?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        savePrivateAndSync();
+      }
+    });
   });
 
-  $("#sync-cloudflare")?.addEventListener("click", async () => {
-    try {
-      await api("/api/cloudflare/sync", { method: "POST", body: {} });
-      toast("Cloudflare DNS synchronization started");
-    } catch (error) {
-      toast(error.message, true);
-    }
-  });
+  $("#sync-cloudflare")?.addEventListener("click", () => runCloudflareSyncNow(false));
 
   $("#issue-cert")?.addEventListener("click", async () => {
+    const btn = $("#issue-cert");
     try {
-      await api("/api/tls/issue", { method: "POST", body: { agree: true } });
+      if (btn) btn.disabled = true;
+      const { hostnameVal, emailVal, targetVal, frpServerVal, cfTokenVal } = collectPrivateInputs();
+      await api("/api/tls/issue", {
+        method: "POST",
+        body: {
+          agree: true,
+          hostname: hostnameVal,
+          email: emailVal,
+          public_target: targetVal,
+          frp_server: frpServerVal,
+          cloudflare_token: cfTokenVal
+        }
+      });
+      if (cfTokenVal) {
+        state.secrets.cloudflare = true;
+        if ($("#cloudflare-token")) $("#cloudflare-token").value = "";
+        if ($("#cloudflare-token-state")) {
+          $("#cloudflare-token-state").textContent = "Encrypted Cloudflare token is saved. Leave blank to keep it.";
+        }
+      }
       toast("ACME DNS-01 certificate issuance started");
     } catch (error) {
       toast(error.message, true);
+    } finally {
+      if (btn) btn.disabled = false;
     }
   });
 
@@ -3194,10 +3498,7 @@ function bindEvents() {
   });
 
   $("#dash-jump-schedule-btn")?.addEventListener("click", () => {
-    switchPage("blocking");
-    const rulesTabBtn = $('.subnav-item[data-block-tab="rules"]');
-    if (rulesTabBtn) rulesTabBtn.click();
-    setTimeout(() => $("#schedule-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+    switchPage("blocking", "rules");
   });
 
   // Scheduled Curfew & Deep Focus Engine (with Day-of-Week & Profile support)
@@ -3311,10 +3612,12 @@ function bindEvents() {
       { title: "Go to DNS Settings & L1 Cache", sub: "Upstreams, L1 wire cache & split-horizon LAN", badge: "Page", run: () => switchPage("dns") },
       { title: "Go to Private DNS & Railway Setup", sub: "TLS certificates, Android Doctor & QR provisioning", badge: "Page", run: () => switchPage("private") },
       { title: "Go to System & Diagnostics", sub: "Privacy mode, Prometheus metrics & backups", badge: "Page", run: () => switchPage("system") },
-      { title: "Install Recommended 4-Feed Security Bundle", sub: "StevenBlack, AdGuard SDN, URLHaus & Peter Lowe", badge: "Action", run: () => { switchPage("blocking"); $("#install-bundle-btn")?.click(); } },
+      { title: "Install Recommended 4-Feed Security Bundle", sub: "StevenBlack, AdGuard SDN, URLHaus & Peter Lowe", badge: "Action", run: () => { switchPage("blocking", "lists"); $("#install-bundle-btn")?.click(); } },
+      { title: "Browse 24-Feed Curated Blocklist Marketplace", sub: "OISD, HaGeZi, AdGuard, StevenBlack, Phishing Army & more", badge: "Page", run: () => switchPage("blocking", "marketplace") },
+      { title: "Manage 24 One-Click Service & Threat Presets", sub: "Block TikTok, YouTube, Gaming, AI portals & DoH bypass", badge: "Page", run: () => switchPage("blocking", "presets") },
       { title: "Flush L1 Wire Cache & Unbound Resolver Cache", sub: "Purge all cached DNS RRsets immediately", badge: "Action", run: () => $("#flush-l1-btn")?.click() },
-      { title: "Run Android Private DNS Readiness Doctor", sub: "Verify TLS 1.3 ALPN dot, EDNS0 & SOA compliance", badge: "Verify", run: () => { switchPage("private"); loadAndroidDoctor(); } },
-      { title: "Run Live DoT Upstream Benchmark", sub: "Compare Cloudflare, Quad9, Google, AdGuard & Mullvad", badge: "Action", run: () => { switchPage("dns"); $("#run-benchmark-btn")?.click(); } },
+      { title: "Run Android Private DNS Readiness Doctor", sub: "Verify TLS 1.3 ALPN dot, EDNS0 & SOA compliance", badge: "Verify", run: () => { switchPage("private", "doctors"); loadAndroidDoctor(); } },
+      { title: "Run Live DoT Upstream Benchmark", sub: "Compare Cloudflare, Quad9, Google, AdGuard & Mullvad", badge: "Action", run: () => { switchPage("dns", "cache"); $("#run-benchmark-btn")?.click(); } },
       { title: "Pause Policy Blocking for 5 Minutes", sub: "Temporarily bypass blocklists and rules", badge: "Snooze", run: async () => { const res = await api("/api/blocking/pause", { method: "POST", body: { seconds: 300 } }); updateSnoozeUI(res); toast("Blocking paused for 5m"); } },
       { title: "Resume Policy Blocking Immediately", sub: "Re-enable all blocklists and custom rules", badge: "Policy", run: async () => { const res = await api("/api/blocking/pause", { method: "POST", body: { seconds: 0 } }); updateSnoozeUI(res); toast("Policy blocking resumed"); } },
       { title: "Enable Bedtime Curfew Schedule (22:00–07:00)", sub: "Block social, video & gaming overnight automatically", badge: "Schedule", run: async () => { const res = await api("/api/schedule", { method: "POST", body: { enabled: true, mode: "bedtime", start: "22:00", end: "07:00" } }); renderSchedule(res.schedule, res.active); toast("Bedtime Curfew Schedule enabled"); } },
@@ -3341,7 +3644,7 @@ function bindEvents() {
         sub: "Test policy verdict & live Unbound resolution for " + q,
         badge: "Diagnostic",
         run: () => {
-          switchPage("system");
+          switchPage("system", "diagnostics");
           $("#diag-name").value = q;
           $("#diagnostic-form").dispatchEvent(new Event("submit", { cancelable: true }));
         }
@@ -3442,6 +3745,14 @@ function bindEvents() {
       return;
     }
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key >= "1" && e.key <= "6") {
+      const targetPage = VALID_PAGES[Number(e.key) - 1];
+      if (targetPage) {
+        e.preventDefault();
+        switchPage(targetPage);
+      }
+      return;
+    }
     if (e.key === "/") {
       e.preventDefault();
       switchPage("queries");

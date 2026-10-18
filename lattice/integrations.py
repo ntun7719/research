@@ -28,7 +28,7 @@ from .store import atomic_write
 
 class CloudflareDNS:
     def __init__(self, token: str):
-        self.token = token
+        self.token = token.strip()
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         request = urllib.request.Request(
@@ -41,12 +41,22 @@ class CloudflareDNS:
             with urllib.request.urlopen(request, timeout=20) as response:
                 body = json.load(response)
         except urllib.error.HTTPError as exc:
-            raise ValueError(f"Cloudflare returned HTTP {exc.code}") from None
+            detail = ""
+            try:
+                err_json = json.loads(exc.read().decode("utf-8", "replace"))
+                errs = err_json.get("errors") or []
+                if errs and isinstance(errs[0], dict) and errs[0].get("message"):
+                    detail = ": " + str(errs[0]["message"])
+            except Exception:
+                pass
+            raise ValueError(f"Cloudflare returned HTTP {exc.code}{detail}") from None
         except OSError:
             raise ValueError("Cloudflare API is unreachable") from None
         if not body.get("success"):
-            raise ValueError("Cloudflare rejected the request")
-        return body["result"]
+            errs = body.get("errors") or []
+            msg = errs[0].get("message") if (errs and isinstance(errs[0], dict) and errs[0].get("message")) else "Cloudflare rejected the request"
+            raise ValueError(str(msg))
+        return body.get("result")
 
     def zone_for(self, fqdn: str) -> str:
         labels = fqdn.split(".")
@@ -55,16 +65,17 @@ class CloudflareDNS:
             result = self.request("GET", "/zones?" + urllib.parse.urlencode({"name": zone_name, "per_page": 1}))
             if result:
                 return result[0]["id"]
-        raise ValueError("No accessible Cloudflare zone matches the hostname")
+        raise ValueError(f"No accessible Cloudflare zone matches {fqdn}")
 
     def sync(self, fqdn: str, target: str) -> dict[str, Any]:
         fqdn = hostname(fqdn)
+        target = (target or "").strip()
         if not target:
-            raise ValueError("Public target is required")
+            raise ValueError("Public target or FRP server address is required")
         try:
             address = ipaddress.ip_address(target)
             if not address.is_global:
-                raise ValueError("Public target must be globally routable")
+                raise ValueError("Public target IP must be globally routable")
             kind = "A" if address.version == 4 else "AAAA"
             normalized = str(address)
         except ValueError as exc:
@@ -77,12 +88,18 @@ class CloudflareDNS:
 
         zone = self.zone_for(fqdn)
         base = f"/zones/{zone}/dns_records"
-        records = self.request("GET", base + "?" + urllib.parse.urlencode({"name": fqdn, "per_page": 100}))
+        records = self.request("GET", base + "?" + urllib.parse.urlencode({"name": fqdn, "per_page": 100})) or []
         addresses = [r for r in records if r.get("type") in ("A", "AAAA", "CNAME")]
         same = [r for r in addresses if r.get("type") == kind]
         conflicts = [r for r in addresses if r.get("type") != kind]
-        if conflicts or len(same) > 1:
-            raise ValueError("Conflicting Cloudflare A, AAAA or CNAME records must be removed first")
+        for conflict in conflicts:
+            if conflict.get("id"):
+                self.request("DELETE", f"{base}/{conflict['id']}")
+        if len(same) > 1:
+            for extra in same[1:]:
+                if extra.get("id"):
+                    self.request("DELETE", f"{base}/{extra['id']}")
+            same = same[:1]
         payload = {
             "type": kind,
             "name": fqdn,

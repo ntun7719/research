@@ -111,6 +111,7 @@
         <div class="shortcut-line"><span>Command palette</span><kbd class="kbd-pill">⌘K</kbd></div>
         <div class="shortcut-line"><span>Search log</span><kbd class="kbd-pill">/</kbd></div>
         <div class="shortcut-line"><span>Refresh data</span><kbd class="kbd-pill">R</kbd></div>
+        <div class="shortcut-line"><span>Jump sections</span><kbd class="kbd-pill">1–6</kbd></div>
       </div>
 
       <div class="sidebar-status">
@@ -164,6 +165,9 @@
           <button id="refresh" type="button" class="button secondary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             <span>Refresh</span>
+          </button>
+          <button id="density-toggle" type="button" class="button secondary" title="Toggle Single-Screen Compact / Spacious Density">
+            <span id="density-toggle-label">Compact</span>
           </button>
           <button id="theme-toggle" type="button" class="icon-button" aria-label="Toggle color theme" title="Toggle Dark / Light Mode">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
@@ -295,64 +299,14 @@
           </div>
         </div>
 
-        <article class="card topology-card">
-          <div class="card-header">
-            <div>
-              <div class="title-with-pill">
-                <h2>Resolution Data Path</h2>
-                <span class="badge info">End-to-End DoT + CNAME Guard</span>
-              </div>
-              <p>Live packet pipeline from client devices through policy evaluation, CNAME cloaking verification, and L1 wire cache to Unbound.</p>
-            </div>
-            <button type="button" class="text-button jump-page" data-target="private">Configure Transport →</button>
-          </div>
-          <div class="topology-grid">
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>Client Endpoints</strong>
-                <span id="topo-hostname-label">Android Private DNS / DoH</span>
-                <span class="node-pill">TLS 853 &amp; HTTPS 443</span>
-              </div>
-            </div>
-            <div class="topo-connector">→</div>
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>FRP Edge Bridge</strong>
-                <span id="topo-frp-state">Direct Listener</span>
-                <span class="node-pill">PROXY v1/v2 Auto-Peek</span>
-              </div>
-            </div>
-            <div class="topo-connector">→</div>
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>Policy &amp; CNAME Engine</strong>
-                <span id="topo-policy-status">0 rules • 3 categories</span>
-                <span class="node-pill">O(1) Bloom + Regex</span>
-              </div>
-            </div>
-            <div class="topo-connector">→</div>
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>L1 Cache + Unbound Core</strong>
-                <span id="topo-upstream-status">Validating Upstreams</span>
-                <span class="node-pill">RFC 7858 DoT + RFC 8767</span>
-              </div>
-            </div>
-          </div>
-        </article>
+        <div class="subnav page-subnav" id="dashboard-subnav" role="tablist" aria-label="Dashboard sections">
+          <button type="button" class="subnav-item page-subtab-btn active" data-page-sub="dashboard" data-subtab="overview">Traffic &amp; Transport</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="shields">Security Shields &amp; Live Pulse</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="domains">Top Domains &amp; Clients</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="topology">Resolution Path &amp; Upstreams</button>
+        </div>
 
+        <div id="dash-tab-overview" class="sub-pane active" data-page-pane="dashboard" data-pane="overview">
         <div class="content-grid dashboard-grid">
           <article class="card chart-card">
             <div class="card-header">
@@ -423,7 +377,9 @@
             </div>
           </article>
         </div>
+        </div>
 
+        <div id="dash-tab-shields" class="sub-pane" data-page-pane="dashboard" data-pane="shields">
         <div class="content-grid two" id="dashboard-executive-row">
           <article class="card" id="dashboard-security-card">
             <div class="card-header">
@@ -509,7 +465,9 @@
             </div>
           </article>
         </div>
+        </div>
 
+        <div id="dash-tab-domains" class="sub-pane" data-page-pane="dashboard" data-pane="domains">
         <div class="content-grid two">
           <article class="card">
             <div class="card-header">
@@ -565,6 +523,66 @@
             </div>
           </article>
         </div>
+        </div>
+
+        <div id="dash-tab-topology" class="sub-pane" data-page-pane="dashboard" data-pane="topology">
+        <article class="card topology-card">
+          <div class="card-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>Resolution Data Path</h2>
+                <span class="badge info">End-to-End DoT + CNAME Guard</span>
+              </div>
+              <p>Live packet pipeline from client devices through policy evaluation, CNAME cloaking verification, and L1 wire cache to Unbound.</p>
+            </div>
+            <button type="button" class="text-button jump-page" data-target="private">Configure Transport →</button>
+          </div>
+          <div class="topology-grid">
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>Client Endpoints</strong>
+                <span id="topo-hostname-label">Android Private DNS / DoH</span>
+                <span class="node-pill">TLS 853 &amp; HTTPS 443</span>
+              </div>
+            </div>
+            <div class="topo-connector">→</div>
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>FRP Edge Bridge</strong>
+                <span id="topo-frp-state">Direct Listener</span>
+                <span class="node-pill">PROXY v1/v2 Auto-Peek</span>
+              </div>
+            </div>
+            <div class="topo-connector">→</div>
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>Policy &amp; CNAME Engine</strong>
+                <span id="topo-policy-status">0 rules • 3 categories</span>
+                <span class="node-pill">O(1) Bloom + Regex</span>
+              </div>
+            </div>
+            <div class="topo-connector">→</div>
+            <div class="topology-node">
+              <div class="topo-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div class="topo-details">
+                <strong>L1 Cache + Unbound Core</strong>
+                <span id="topo-upstream-status">Validating Upstreams</span>
+                <span class="node-pill">RFC 7858 DoT + RFC 8767</span>
+              </div>
+            </div>
+          </div>
+        </article>
 
         <div class="content-grid two">
           <article class="card">
@@ -619,6 +637,7 @@
               <div id="dga-body" class="list-stack"></div>
             </div>
           </article>
+        </div>
         </div>
       </section>
 
@@ -740,9 +759,11 @@
 
       <!-- ==================== 3. BLOCKING PAGE ==================== -->
       <section class="page" id="page-blocking">
-        <div class="subnav">
-          <button type="button" class="subnav-item active" data-block-tab="lists">Blocklists &amp; Categories</button>
-          <button type="button" class="subnav-item" data-block-tab="rules">Custom Rules &amp; Presets</button>
+        <div class="subnav page-subnav" id="blocking-subnav" role="tablist" aria-label="Blocking sections">
+          <button type="button" class="subnav-item active" data-block-tab="lists">Active Lists &amp; Categories</button>
+          <button type="button" class="subnav-item" data-block-tab="marketplace">24-Feed Marketplace</button>
+          <button type="button" class="subnav-item" data-block-tab="rules">Custom Rules &amp; Schedule</button>
+          <button type="button" class="subnav-item" data-block-tab="presets">Service Presets (24)</button>
           <button type="button" class="subnav-item" data-block-tab="devices">Client Devices &amp; Profiles</button>
         </div>
 
@@ -761,7 +782,8 @@
           <div id="blocklist-search-results" class="lookup-results-box hidden"></div>
         </article>
 
-        <!-- PROTECTION CATEGORIES CARD -->
+        <!-- TAB 1: ACTIVE SUBSCRIPTION BLOCKLISTS & PROTECTION CATEGORIES -->
+        <div id="blocking-lists" class="block-tab active">
         <article class="card protection-card">
           <div class="card-header">
             <div>
@@ -772,34 +794,6 @@
           </div>
           <div id="category-grid" class="category-grid"></div>
         </article>
-
-        <!-- TAB 1: SUBSCRIPTION BLOCKLISTS -->
-        <div id="blocking-lists" class="block-tab active">
-          <article class="card accent-card" id="catalog-marketplace-card">
-            <div class="card-header">
-              <div>
-                <div class="title-with-pill">
-                  <h2>Curated Blocklist Marketplace (24 Verified Public Feeds)</h2>
-                  <span id="catalog-installed-badge" class="badge allowed">0/24 Installed</span>
-                </div>
-                <p>Choose from 24 battle-tested open-source DNS blocklists (OISD, HaGeZi, StevenBlack, AdGuard, Abuse.ch, Phishing Army, EasyPrivacy, Frogeye) or install a 1-click protection pack.</p>
-              </div>
-              <div class="button-row">
-                <button type="button" class="button primary catalog-pack-btn" data-pack="core">Core Pack (4)</button>
-                <button type="button" class="button secondary catalog-pack-btn" data-pack="privacy">Privacy Pro Pack (11)</button>
-                <button type="button" class="button secondary catalog-pack-btn" data-pack="malware">Malware Fortress (7)</button>
-                <button type="button" class="button secondary catalog-pack-btn" data-pack="family">Family Safe Pack (6)</button>
-              </div>
-            </div>
-            <div class="catalog-filter-bar" id="catalog-filter-bar">
-              <button type="button" class="chart-mode-btn catalog-filter-btn active" data-cat="all">All Lists (24)</button>
-              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="ads">Ads &amp; General (7)</button>
-              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="tracking">Trackers &amp; Telemetry (6)</button>
-              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="malware">Malware, Phishing &amp; Scams (7)</button>
-              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="family_social">Adult, Gambling &amp; Social (4)</button>
-            </div>
-            <div id="catalog-grid" class="catalog-grid"></div>
-          </article>
 
           <div class="content-grid blocking-layout">
             <article class="card">
@@ -869,98 +863,37 @@
           </div>
         </div>
 
-        <!-- TAB 2: CUSTOM RULES & QUICK PRESETS -->
+        <!-- TAB 2: 24-FEED CURATED MARKETPLACE -->
+        <div id="blocking-marketplace" class="block-tab">
+          <article class="card accent-card" id="catalog-marketplace-card">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>Curated Blocklist Marketplace (24 Verified Public Feeds)</h2>
+                  <span id="catalog-installed-badge" class="badge allowed">0/24 Installed</span>
+                </div>
+                <p>Choose from 24 battle-tested open-source DNS blocklists (OISD, HaGeZi, StevenBlack, AdGuard, Abuse.ch, Phishing Army, EasyPrivacy, Frogeye) or install a 1-click protection pack.</p>
+              </div>
+              <div class="button-row">
+                <button type="button" class="button primary catalog-pack-btn" data-pack="core">Core Pack (4)</button>
+                <button type="button" class="button secondary catalog-pack-btn" data-pack="privacy">Privacy Pro Pack (11)</button>
+                <button type="button" class="button secondary catalog-pack-btn" data-pack="malware">Malware Fortress (7)</button>
+                <button type="button" class="button secondary catalog-pack-btn" data-pack="family">Family Safe Pack (6)</button>
+              </div>
+            </div>
+            <div class="catalog-filter-bar" id="catalog-filter-bar">
+              <button type="button" class="chart-mode-btn catalog-filter-btn active" data-cat="all">All Lists (24)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="ads">Ads &amp; General (7)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="tracking">Trackers &amp; Telemetry (6)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="malware">Malware, Phishing &amp; Scams (7)</button>
+              <button type="button" class="chart-mode-btn catalog-filter-btn" data-cat="family_social">Adult, Gambling &amp; Social (4)</button>
+            </div>
+            <div id="catalog-grid" class="catalog-grid"></div>
+          </article>
+        </div>
+
+        <!-- TAB 3: CUSTOM RULES & SCHEDULED CURFEW -->
         <div id="blocking-rules" class="block-tab">
-          <article class="card accent-card" id="schedule-card">
-            <div class="card-header">
-              <div>
-                <div class="title-with-pill">
-                  <h2>Scheduled Curfew &amp; Deep Focus Engine</h2>
-                  <span id="schedule-status-badge" class="badge info">Standby</span>
-                </div>
-                <p>Automatically block distracting social platforms, video streams, and gaming networks during study, work, or sleep hours.</p>
-              </div>
-              <button id="save-schedule-btn" type="button" class="button primary">Save Schedule</button>
-            </div>
-            <div class="curated-feeds-box schedule-presets-bar">
-              <span class="curated-label">1-Click Schedule Templates:</span>
-              <div class="button-row">
-                <button type="button" class="btn-chip sched-preset-btn" data-mode="bedtime" data-start="22:00" data-end="07:00">Bedtime Curfew (22:00–07:00)</button>
-                <button type="button" class="btn-chip sched-preset-btn" data-mode="focus" data-start="09:00" data-end="17:00">Deep Work / Study (09:00–17:00)</button>
-                <button type="button" class="btn-chip sched-preset-btn" data-mode="kids" data-start="00:00" data-end="23:59">24/7 Kids Safe Mode</button>
-              </div>
-            </div>
-            <div class="form-grid schedule-form-grid">
-              <label class="setting-row">
-                <span>
-                  <strong>Enable Scheduled Blocking Window</strong>
-                  <small id="schedule-summary-text">Blocks TikTok, Meta, YouTube, Gaming, Snapchat &amp; Reddit during active window.</small>
-                </span>
-                <input id="sched-enabled" type="checkbox" class="switch-input">
-              </label>
-              <div class="form-grid three-col">
-                <label class="field">
-                  <span>Window Start (24h)</span>
-                  <input id="sched-start" type="time" value="22:00">
-                </label>
-                <label class="field">
-                  <span>Window End (24h)</span>
-                  <input id="sched-end" type="time" value="07:00">
-                </label>
-                <label class="field">
-                  <span>Target Client Profile</span>
-                  <select id="sched-profile">
-                    <option value="*">All Client Devices (*)</option>
-                  </select>
-                </label>
-              </div>
-              <div class="sched-days-row">
-                <div class="sched-days-head">
-                  <span class="curated-label">Active Days of Week:</span>
-                  <div class="sched-day-quick">
-                    <button type="button" class="text-button sched-day-preset" data-days="mon,tue,wed,thu,fri">Weekdays</button>
-                    <button type="button" class="text-button sched-day-preset" data-days="sat,sun">Weekends</button>
-                    <button type="button" class="text-button sched-day-preset" data-days="mon,tue,wed,thu,fri,sat,sun">Every Day</button>
-                  </div>
-                </div>
-                <div class="sched-days-pills" id="sched-days-pills">
-                  <button type="button" class="day-pill active" data-day="mon">Mon</button>
-                  <button type="button" class="day-pill active" data-day="tue">Tue</button>
-                  <button type="button" class="day-pill active" data-day="wed">Wed</button>
-                  <button type="button" class="day-pill active" data-day="thu">Thu</button>
-                  <button type="button" class="day-pill active" data-day="fri">Fri</button>
-                  <button type="button" class="day-pill active" data-day="sat">Sat</button>
-                  <button type="button" class="day-pill active" data-day="sun">Sun</button>
-                </div>
-              </div>
-            </div>
-          </article>
-
-          <article class="card" id="presets-card">
-            <div class="card-header">
-              <div>
-                <div class="title-with-pill">
-                  <h2>One-Click Service &amp; Threat Presets (24 Curated Catalogs)</h2>
-                  <span id="presets-active-badge" class="badge info">0/24 Blocked</span>
-                </div>
-                <p>Instantly block or unblock social apps, video/audio streaming, gaming platforms, AI portals, dating/betting sites, cryptominers, and DoH bypass endpoints.</p>
-              </div>
-              <div class="button-row">
-                <button id="presets-block-group-btn" type="button" class="button secondary">Block Shown</button>
-                <button id="presets-allow-group-btn" type="button" class="button secondary">Unblock Shown</button>
-              </div>
-            </div>
-            <div class="catalog-filter-bar" id="preset-group-bar">
-              <button type="button" class="chart-mode-btn preset-group-btn active" data-group="all">All Presets (24)</button>
-              <button type="button" class="chart-mode-btn preset-group-btn" data-group="social">Social &amp; Messaging (9)</button>
-              <button type="button" class="chart-mode-btn preset-group-btn" data-group="streaming">Video &amp; Music (5)</button>
-              <button type="button" class="chart-mode-btn preset-group-btn" data-group="gaming_ai">Gaming &amp; AI (2)</button>
-              <button type="button" class="chart-mode-btn preset-group-btn" data-group="adult_betting">Dating, Shopping &amp; Betting (3)</button>
-              <button type="button" class="chart-mode-btn preset-group-btn" data-group="security">Security &amp; Telemetry (5)</button>
-            </div>
-            <div id="presets-grid" class="presets-grid"></div>
-          </article>
-
           <div class="content-grid blocking-layout">
             <article class="card">
               <div class="card-header">
@@ -1047,9 +980,102 @@
               </form>
             </article>
           </div>
+
+          <article class="card accent-card" id="schedule-card">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>Scheduled Curfew &amp; Deep Focus Engine</h2>
+                  <span id="schedule-status-badge" class="badge info">Standby</span>
+                </div>
+                <p>Automatically block distracting social platforms, video streams, and gaming networks during study, work, or sleep hours.</p>
+              </div>
+              <button id="save-schedule-btn" type="button" class="button primary">Save Schedule</button>
+            </div>
+            <div class="curated-feeds-box schedule-presets-bar">
+              <span class="curated-label">1-Click Schedule Templates:</span>
+              <div class="button-row">
+                <button type="button" class="btn-chip sched-preset-btn" data-mode="bedtime" data-start="22:00" data-end="07:00">Bedtime Curfew (22:00–07:00)</button>
+                <button type="button" class="btn-chip sched-preset-btn" data-mode="focus" data-start="09:00" data-end="17:00">Deep Work / Study (09:00–17:00)</button>
+                <button type="button" class="btn-chip sched-preset-btn" data-mode="kids" data-start="00:00" data-end="23:59">24/7 Kids Safe Mode</button>
+              </div>
+            </div>
+            <div class="form-grid schedule-form-grid">
+              <label class="setting-row">
+                <span>
+                  <strong>Enable Scheduled Blocking Window</strong>
+                  <small id="schedule-summary-text">Blocks TikTok, Meta, YouTube, Gaming, Snapchat &amp; Reddit during active window.</small>
+                </span>
+                <input id="sched-enabled" type="checkbox" class="switch-input">
+              </label>
+              <div class="form-grid three-col">
+                <label class="field">
+                  <span>Window Start (24h)</span>
+                  <input id="sched-start" type="time" value="22:00">
+                </label>
+                <label class="field">
+                  <span>Window End (24h)</span>
+                  <input id="sched-end" type="time" value="07:00">
+                </label>
+                <label class="field">
+                  <span>Target Client Profile</span>
+                  <select id="sched-profile">
+                    <option value="*">All Client Devices (*)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="sched-days-row">
+                <div class="sched-days-head">
+                  <span class="curated-label">Active Days of Week:</span>
+                  <div class="sched-day-quick">
+                    <button type="button" class="text-button sched-day-preset" data-days="mon,tue,wed,thu,fri">Weekdays</button>
+                    <button type="button" class="text-button sched-day-preset" data-days="sat,sun">Weekends</button>
+                    <button type="button" class="text-button sched-day-preset" data-days="mon,tue,wed,thu,fri,sat,sun">Every Day</button>
+                  </div>
+                </div>
+                <div class="sched-days-pills" id="sched-days-pills">
+                  <button type="button" class="day-pill active" data-day="mon">Mon</button>
+                  <button type="button" class="day-pill active" data-day="tue">Tue</button>
+                  <button type="button" class="day-pill active" data-day="wed">Wed</button>
+                  <button type="button" class="day-pill active" data-day="thu">Thu</button>
+                  <button type="button" class="day-pill active" data-day="fri">Fri</button>
+                  <button type="button" class="day-pill active" data-day="sat">Sat</button>
+                  <button type="button" class="day-pill active" data-day="sun">Sun</button>
+                </div>
+              </div>
+            </div>
+          </article>
         </div>
 
-        <!-- TAB 3: CLIENT DEVICES & CIDR PROFILES -->
+        <!-- TAB 4: 24 ONE-CLICK SERVICE & THREAT PRESETS -->
+        <div id="blocking-presets" class="block-tab">
+          <article class="card" id="presets-card">
+            <div class="card-header">
+              <div>
+                <div class="title-with-pill">
+                  <h2>One-Click Service &amp; Threat Presets (24 Curated Catalogs)</h2>
+                  <span id="presets-active-badge" class="badge info">0/24 Blocked</span>
+                </div>
+                <p>Instantly block or unblock social apps, video/audio streaming, gaming platforms, AI portals, dating/betting sites, cryptominers, and DoH bypass endpoints.</p>
+              </div>
+              <div class="button-row">
+                <button id="presets-block-group-btn" type="button" class="button secondary">Block Shown</button>
+                <button id="presets-allow-group-btn" type="button" class="button secondary">Unblock Shown</button>
+              </div>
+            </div>
+            <div class="catalog-filter-bar" id="preset-group-bar">
+              <button type="button" class="chart-mode-btn preset-group-btn active" data-group="all">All Presets (24)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="social">Social &amp; Messaging (9)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="streaming">Video &amp; Music (5)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="gaming_ai">Gaming &amp; AI (2)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="adult_betting">Dating, Shopping &amp; Betting (3)</button>
+              <button type="button" class="chart-mode-btn preset-group-btn" data-group="security">Security &amp; Telemetry (5)</button>
+            </div>
+            <div id="presets-grid" class="presets-grid"></div>
+          </article>
+        </div>
+
+        <!-- TAB 5: CLIENT DEVICES & CIDR PROFILES -->
         <div id="blocking-devices" class="block-tab">
           <article class="card">
             <div class="card-header">
@@ -1111,64 +1137,14 @@
           <button id="save-dns" type="button" class="button primary">Apply DNS Settings</button>
         </div>
 
-        <article class="card accent-card" id="l1-cache-card">
-          <div class="card-header">
-            <div>
-              <div class="title-with-pill">
-                <h2>L1 Wire-Speed DNS Cache &amp; CNAME Unmasking Guard</h2>
-                <span class="badge allowed">RFC 8767 Serve-Expired + CNAME Cloaking Protection</span>
-              </div>
-              <p>Sub-millisecond in-memory wire cache with dynamic TTL decrementing, stale-while-revalidate fallback, and deep inspection of CNAME chains against active blocklists.</p>
-            </div>
-            <button id="flush-l1-btn" type="button" class="button secondary">Flush L1 &amp; Unbound Cache</button>
-          </div>
-          <div class="mini-stats" id="l1-cache-stats-grid">
-            <div class="mini-stat-box">
-              <span class="mini-label">L1 Cache Hit Ratio</span>
-              <strong id="l1-hit-rate" class="mini-val">0.0%</strong>
-              <small id="l1-hit-detail">0 hits / 0 misses</small>
-            </div>
-            <div class="mini-stat-box">
-              <span class="mini-label">Active Wire Entries</span>
-              <strong id="l1-active-entries" class="mini-val">0</strong>
-              <small id="l1-capacity-detail">Max 4,096 RRsets</small>
-            </div>
-            <div class="mini-stat-box">
-              <span class="mini-label">Stale Fallback Hits</span>
-              <strong id="l1-stale-hits" class="mini-val">0</strong>
-              <small>RFC 8767 resiliency</small>
-            </div>
-            <div class="mini-stat-box">
-              <span class="mini-label">CNAME Unmasking</span>
-              <strong class="mini-val text-green">Active</strong>
-              <small>Inspects all CNAME hops</small>
-            </div>
-          </div>
-          <div class="l1-entries-box">
-            <div class="l1-entries-head">
-              <strong>Hot Cached Wire RRsets (Live L1 Inspector)</strong>
-              <span class="muted">Real-time decremented TTLs &amp; hit counters</span>
-            </div>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Domain</th>
-                    <th class="col-type">Type</th>
-                    <th>Cached Answer Summary</th>
-                    <th class="col-latency">TTL Left</th>
-                    <th class="col-type">Hits</th>
-                    <th class="col-action">Evict</th>
-                  </tr>
-                </thead>
-                <tbody id="l1-entries-body">
-                  <tr><td colspan="6" class="empty-state">No cached RRsets in L1 memory yet.</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </article>
+        <div class="subnav page-subnav" id="dns-subnav" role="tablist" aria-label="DNS Settings sections">
+          <button type="button" class="subnav-item page-subtab-btn active" data-page-sub="dns" data-subtab="upstreams">DoT Upstreams &amp; Benchmark</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dns" data-subtab="security">Security &amp; Caching Options</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dns" data-subtab="cache">L1 Wire Cache Inspector</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dns" data-subtab="records">Local LAN &amp; Split Routing</button>
+        </div>
 
+        <div id="dns-tab-upstreams" class="sub-pane active" data-page-pane="dns" data-pane="upstreams">
         <article class="card">
           <div class="card-header">
             <div>
@@ -1193,32 +1169,10 @@
             </div>
           </div>
         </article>
+        </div>
 
-        <article class="card">
-          <div class="card-header">
-            <div>
-              <h2>Live DoT Upstream Latency Benchmark</h2>
-              <p>Concurrently test TLS handshake + query round-trip speed and DNSSEC validation across public and configured resolvers.</p>
-            </div>
-            <button id="run-benchmark-btn" type="button" class="button secondary">Run Live Benchmark</button>
-          </div>
-          <div id="benchmark-results" class="benchmark-container">
-            <div class="empty-state">Click "Run Live Benchmark" to measure real-time DoT latency and DNSSEC status.</div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-header">
-            <div>
-              <h2>Local DNS Records (Split-Horizon LAN)</h2>
-              <p>Serve custom A, AAAA, CNAME, and TXT records directly from Unbound and the DoT gateway with automatic reverse PTR synthesis.</p>
-            </div>
-            <button id="add-local-record-btn" type="button" class="button secondary">+ Add Local Record</button>
-          </div>
-          <div id="local-records-editor" class="editor-list"></div>
-        </article>
-
-        <article class="card">
+        <div id="dns-tab-security" class="sub-pane" data-page-pane="dns" data-pane="security">
+        <article class="card" id="dns-security-options-card">
           <div class="card-header">
             <div>
               <h2>Resolver Security &amp; Caching Options</h2>
@@ -1320,8 +1274,94 @@
             </div>
           </div>
         </article>
+        </div>
 
-        <details class="card advanced-card">
+        <div id="dns-tab-cache" class="sub-pane" data-page-pane="dns" data-pane="cache">
+        <article class="card accent-card" id="l1-cache-card">
+          <div class="card-header">
+            <div>
+              <div class="title-with-pill">
+                <h2>L1 Wire-Speed DNS Cache &amp; CNAME Unmasking Guard</h2>
+                <span class="badge allowed">RFC 8767 Serve-Expired + CNAME Cloaking Protection</span>
+              </div>
+              <p>Sub-millisecond in-memory wire cache with dynamic TTL decrementing, stale-while-revalidate fallback, and deep inspection of CNAME chains against active blocklists.</p>
+            </div>
+            <button id="flush-l1-btn" type="button" class="button secondary">Flush L1 &amp; Unbound Cache</button>
+          </div>
+          <div class="mini-stats" id="l1-cache-stats-grid">
+            <div class="mini-stat-box">
+              <span class="mini-label">L1 Cache Hit Ratio</span>
+              <strong id="l1-hit-rate" class="mini-val">0.0%</strong>
+              <small id="l1-hit-detail">0 hits / 0 misses</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Active Wire Entries</span>
+              <strong id="l1-active-entries" class="mini-val">0</strong>
+              <small id="l1-capacity-detail">Max 4,096 RRsets</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">Stale Fallback Hits</span>
+              <strong id="l1-stale-hits" class="mini-val">0</strong>
+              <small>RFC 8767 resiliency</small>
+            </div>
+            <div class="mini-stat-box">
+              <span class="mini-label">CNAME Unmasking</span>
+              <strong class="mini-val text-green">Active</strong>
+              <small>Inspects all CNAME hops</small>
+            </div>
+          </div>
+          <div class="l1-entries-box">
+            <div class="l1-entries-head">
+              <strong>Hot Cached Wire RRsets (Live L1 Inspector)</strong>
+              <span class="muted">Real-time decremented TTLs &amp; hit counters</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th class="col-type">Type</th>
+                    <th>Cached Answer Summary</th>
+                    <th class="col-latency">TTL Left</th>
+                    <th class="col-type">Hits</th>
+                    <th class="col-action">Evict</th>
+                  </tr>
+                </thead>
+                <tbody id="l1-entries-body">
+                  <tr><td colspan="6" class="empty-state">No cached RRsets in L1 memory yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Live DoT Upstream Latency Benchmark</h2>
+              <p>Concurrently test TLS handshake + query round-trip speed and DNSSEC validation across public and configured resolvers.</p>
+            </div>
+            <button id="run-benchmark-btn" type="button" class="button secondary">Run Live Benchmark</button>
+          </div>
+          <div id="benchmark-results" class="benchmark-container">
+            <div class="empty-state">Click "Run Live Benchmark" to measure real-time DoT latency and DNSSEC status.</div>
+          </div>
+        </article>
+        </div>
+
+        <div id="dns-tab-records" class="sub-pane" data-page-pane="dns" data-pane="records">
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>Local DNS Records (Split-Horizon LAN)</h2>
+              <p>Serve custom A, AAAA, CNAME, and TXT records directly from Unbound and the DoT gateway with automatic reverse PTR synthesis.</p>
+            </div>
+            <button id="add-local-record-btn" type="button" class="button secondary">+ Add Local Record</button>
+          </div>
+          <div id="local-records-editor" class="editor-list"></div>
+        </article>
+
+        <details class="card advanced-card" open>
           <summary>
             <span>
               <strong>Advanced Suffix Routing (Split-DNS Forward Zones)</strong>
@@ -1340,6 +1380,7 @@
             <div id="route-editor" class="editor-list"></div>
           </div>
         </details>
+        </div>
       </section>
 
       <!-- ==================== 5. PRIVATE DNS PAGE ==================== -->
@@ -1352,6 +1393,130 @@
           <button id="save-private" type="button" class="button primary">Save Private DNS Config</button>
         </div>
 
+        <div class="subnav page-subnav" id="private-subnav" role="tablist" aria-label="Private DNS sections">
+          <button type="button" class="subnav-item page-subtab-btn active" data-page-sub="private" data-subtab="config">Domain &amp; Cloudflare TLS Vault</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="private" data-subtab="frp">FRP Edge Tunnel (:853)</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="private" data-subtab="guides">Device Setup &amp; QR Code</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="private" data-subtab="doctors">Android &amp; VPN Readiness Doctors</button>
+        </div>
+
+        <div id="private-tab-config" class="sub-pane active" data-page-pane="private" data-pane="config">
+          <div class="content-grid private-layout">
+          <article class="card">
+            <div class="step-header">
+              <span class="section-number">1</span>
+              <div class="section-copy">
+                <h2>Endpoint Hostname &amp; Public Target</h2>
+                <p>The FQDN entered into Android Private DNS and the public IP/hostname where Cloudflare routes traffic.</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label class="field span-2">
+                <span>Private DNS Hostname (FQDN)</span>
+                <input id="private-hostname" placeholder="dns.example.com">
+                <small>Must match your TLS certificate Subject Alternative Name (SAN).</small>
+              </label>
+              <label class="field">
+                <span>ACME Contact Email</span>
+                <input id="private-email" type="email" placeholder="admin@example.com">
+              </label>
+              <label class="field">
+                <span>Public Target IP or FRP Host</span>
+                <input id="private-target" placeholder="203.0.113.10 or frp.example.com">
+                <small>Used when syncing your Cloudflare A/AAAA/CNAME record.</small>
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="step-header">
+              <span class="section-number">2</span>
+              <div class="section-copy">
+                <h2>Cloudflare &amp; TLS Certificate Vault</h2>
+                <p>Automate DNS-01 Let's Encrypt issuance and Cloudflare DNS record synchronization.</p>
+              </div>
+            </div>
+            <label class="field">
+              <span>Cloudflare API Token (Zone:Read, DNS:Edit)</span>
+              <input id="cloudflare-token" type="text" class="secret-input" autocomplete="off" placeholder="Leave blank to keep existing encrypted token">
+              <small id="cloudflare-token-state">No token saved.</small>
+            </label>
+            <div class="button-row">
+              <button id="sync-cloudflare" type="button" class="button secondary">Sync Cloudflare Record</button>
+              <button id="issue-cert" type="button" class="button primary">Issue or Renew Certificate</button>
+              <button id="generate-self-signed" type="button" class="button secondary" title="Generate a SAN-matched X.509 certificate for instant DoT testing">Local Test Cert (Self-Signed)</button>
+            </div>
+            <div id="certificate-card" class="info-box"></div>
+
+            <details class="log-details">
+              <summary>Upload Custom PEM Certificate &amp; Private Key</summary>
+              <form id="upload-cert-form" class="stack upload-cert-box">
+                <label class="field">
+                  <span>Fullchain Certificate PEM</span>
+                  <textarea id="upload-cert-pem" class="compact-textarea" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                </label>
+                <label class="field">
+                  <span>Private Key PEM</span>
+                  <textarea id="upload-key-pem" class="compact-textarea" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                </label>
+                <button type="submit" class="button secondary">Validate &amp; Activate PEM</button>
+              </form>
+            </details>
+          </article>
+          </div>
+        </div>
+
+        <div id="private-tab-frp" class="sub-pane" data-page-pane="private" data-pane="frp">
+          <div class="content-grid private-layout">
+          <article class="card span-2">
+            <div class="step-header">
+              <span class="section-number">3</span>
+              <div class="section-copy">
+                <h2>FRP Edge Tunnel (Public TCP 853 Proxy)</h2>
+                <p>Expose TCP port 853 through a remote FRPS instance with PROXY protocol v1/v2 auto-detection and client IP preservation.</p>
+              </div>
+            </div>
+            <label class="setting-row compact">
+              <span>
+                <strong>Enable FRP Client Supervisor (frpc)</strong>
+                <small>Forwards public port 853 on your FRP server to Lattice's internal PROXY v1/v2 bridge (port 8854).</small>
+              </span>
+              <input id="frp-enabled" type="checkbox" class="switch-input">
+            </label>
+            <div id="frp-fields" class="form-grid hidden">
+              <label class="field">
+                <span>FRP Server Address</span>
+                <input id="frp-server" placeholder="frp.example.com">
+              </label>
+              <label class="field">
+                <span>Control Port</span>
+                <input id="frp-port" type="number" min="1" max="65535" placeholder="7000">
+              </label>
+              <label class="field">
+                <span>Authentication Method</span>
+                <select id="frp-auth">
+                  <option value="none">No Authentication</option>
+                  <option value="token">Token Authentication</option>
+                </select>
+              </label>
+              <label id="frp-token-wrap" class="field hidden">
+                <span>FRP Shared Secret Token</span>
+                <input id="frp-token" type="text" class="secret-input" autocomplete="off" placeholder="Leave blank to keep saved token">
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="restart-frp" type="button" class="button secondary">Restart FRP Tunnel</button>
+            </div>
+            <div id="frp-card" class="info-box"></div>
+            <details class="log-details">
+              <summary>Inspect FRP Supervisor Logs</summary>
+              <pre id="frp-log" class="log-view">No tunnel activity yet.</pre>
+            </details>
+          </article>
+          </div>
+        </div>
+
+        <div id="private-tab-guides" class="sub-pane" data-page-pane="private" data-pane="guides">
         <article class="card accent-card">
           <div class="card-header">
             <div>
@@ -1418,70 +1583,10 @@ DNSOverTLS=yes</code>
             </div>
           </div>
         </article>
+        </div>
 
-        <div class="content-grid private-layout">
-          <article class="card">
-            <div class="step-header">
-              <span class="section-number">1</span>
-              <div class="section-copy">
-                <h2>Endpoint Hostname &amp; Public Target</h2>
-                <p>The FQDN entered into Android Private DNS and the public IP/hostname where Cloudflare routes traffic.</p>
-              </div>
-            </div>
-            <div class="form-grid">
-              <label class="field span-2">
-                <span>Private DNS Hostname (FQDN)</span>
-                <input id="private-hostname" placeholder="dns.example.com">
-                <small>Must match your TLS certificate Subject Alternative Name (SAN).</small>
-              </label>
-              <label class="field">
-                <span>ACME Contact Email</span>
-                <input id="private-email" type="email" placeholder="admin@example.com">
-              </label>
-              <label class="field">
-                <span>Public Target IP or FRP Host</span>
-                <input id="private-target" placeholder="203.0.113.10 or frp.example.com">
-                <small>Used when syncing your Cloudflare A/AAAA/CNAME record.</small>
-              </label>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="step-header">
-              <span class="section-number">2</span>
-              <div class="section-copy">
-                <h2>Cloudflare &amp; TLS Certificate Vault</h2>
-                <p>Automate DNS-01 Let's Encrypt issuance and Cloudflare DNS record synchronization.</p>
-              </div>
-            </div>
-            <label class="field">
-              <span>Cloudflare API Token (Zone:Read, DNS:Edit)</span>
-              <input id="cloudflare-token" type="text" class="secret-input" autocomplete="off" placeholder="Leave blank to keep existing encrypted token">
-              <small id="cloudflare-token-state">No token saved.</small>
-            </label>
-            <div class="button-row">
-              <button id="sync-cloudflare" type="button" class="button secondary">Sync Cloudflare Record</button>
-              <button id="issue-cert" type="button" class="button primary">Issue or Renew Certificate</button>
-              <button id="generate-self-signed" type="button" class="button secondary" title="Generate a SAN-matched X.509 certificate for instant DoT testing">Local Test Cert (Self-Signed)</button>
-            </div>
-            <div id="certificate-card" class="info-box"></div>
-
-            <details class="log-details">
-              <summary>Upload Custom PEM Certificate &amp; Private Key</summary>
-              <form id="upload-cert-form" class="stack upload-cert-box">
-                <label class="field">
-                  <span>Fullchain Certificate PEM</span>
-                  <textarea id="upload-cert-pem" class="compact-textarea" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-                </label>
-                <label class="field">
-                  <span>Private Key PEM</span>
-                  <textarea id="upload-key-pem" class="compact-textarea" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
-                </label>
-                <button type="submit" class="button secondary">Validate &amp; Activate PEM</button>
-              </form>
-            </details>
-          </article>
-
+        <div id="private-tab-doctors" class="sub-pane" data-page-pane="private" data-pane="doctors">
+          <div class="content-grid private-layout">
           <article class="card span-2" id="android-doctor-card">
             <div class="card-header">
               <div>
@@ -1513,52 +1618,7 @@ DNSOverTLS=yes</code>
               <div class="empty-state">Verifying VPN &amp; captive-portal continuity safeguards...</div>
             </div>
           </article>
-
-          <article class="card span-2">
-            <div class="step-header">
-              <span class="section-number">3</span>
-              <div class="section-copy">
-                <h2>FRP Edge Tunnel (Public TCP 853 Proxy)</h2>
-                <p>Expose TCP port 853 through a remote FRPS instance with PROXY protocol v1/v2 auto-detection and client IP preservation.</p>
-              </div>
-            </div>
-            <label class="setting-row compact">
-              <span>
-                <strong>Enable FRP Client Supervisor (frpc)</strong>
-                <small>Forwards public port 853 on your FRP server to Lattice's internal PROXY v1/v2 bridge (port 8854).</small>
-              </span>
-              <input id="frp-enabled" type="checkbox" class="switch-input">
-            </label>
-            <div id="frp-fields" class="form-grid hidden">
-              <label class="field">
-                <span>FRP Server Address</span>
-                <input id="frp-server" placeholder="frp.example.com">
-              </label>
-              <label class="field">
-                <span>Control Port</span>
-                <input id="frp-port" type="number" min="1" max="65535" placeholder="7000">
-              </label>
-              <label class="field">
-                <span>Authentication Method</span>
-                <select id="frp-auth">
-                  <option value="none">No Authentication</option>
-                  <option value="token">Token Authentication</option>
-                </select>
-              </label>
-              <label id="frp-token-wrap" class="field hidden">
-                <span>FRP Shared Secret Token</span>
-                <input id="frp-token" type="text" class="secret-input" autocomplete="off" placeholder="Leave blank to keep saved token">
-              </label>
-            </div>
-            <div class="button-row">
-              <button id="restart-frp" type="button" class="button secondary">Restart FRP Tunnel</button>
-            </div>
-            <div id="frp-card" class="info-box"></div>
-            <details class="log-details">
-              <summary>Inspect FRP Supervisor Logs</summary>
-              <pre id="frp-log" class="log-view">No tunnel activity yet.</pre>
-            </details>
-          </article>
+          </div>
         </div>
       </section>
 
@@ -1572,6 +1632,13 @@ DNSOverTLS=yes</code>
           <button id="save-system" type="button" class="button primary">Save System Settings</button>
         </div>
 
+        <div class="subnav page-subnav" id="system-subnav" role="tablist" aria-label="System sections">
+          <button type="button" class="subnav-item page-subtab-btn active" data-page-sub="system" data-subtab="settings">Privacy, Cache &amp; Storage</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="system" data-subtab="diagnostics">Diagnostic Simulator &amp; Metrics</button>
+          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="system" data-subtab="audit">Backups &amp; Audit Log</button>
+        </div>
+
+        <div id="system-tab-settings" class="sub-pane active" data-page-pane="system" data-pane="settings">
         <div class="content-grid two">
           <article class="card">
             <h2>Telemetry Privacy &amp; Retention</h2>
@@ -1653,6 +1720,34 @@ DNSOverTLS=yes</code>
           </div>
         </article>
 
+        <article class="card account-card">
+          <div>
+            <h2>Administrator Session</h2>
+            <p class="muted">Lattice DNS <span id="system-version">12.0.0-gemini-singularity</span> • Memory-resident CSRF-protected session</p>
+          </div>
+          <button id="logout" type="button" class="button secondary">Sign Out</button>
+        </article>
+
+        <details class="card advanced-card">
+          <summary>
+            <span>
+              <strong>Advanced Configuration Document (Raw JSON)</strong>
+              <small>Inspect or edit the complete validated configuration payload with automatic transactional rollback.</small>
+            </span>
+            <span class="chevron">›</span>
+          </summary>
+          <div class="details-body">
+            <div class="warning-box">Edits here are schema-validated and tested with unbound-checkconf before activation. If the resolver fails to start, Lattice automatically rolls back to the previous revision.</div>
+            <label class="field">
+              <span>Configuration JSON</span>
+              <textarea id="config-editor" spellcheck="false" rows="14"></textarea>
+            </label>
+            <button id="save-advanced" type="button" class="button primary">Validate &amp; Apply JSON</button>
+          </div>
+        </details>
+        </div>
+
+        <div id="system-tab-diagnostics" class="sub-pane" data-page-pane="system" data-pane="diagnostics">
         <article class="card">
           <div class="card-header">
             <div>
@@ -1698,7 +1793,9 @@ DNSOverTLS=yes</code>
           </div>
           <pre id="metrics-preview" class="log-view hidden"></pre>
         </article>
+        </div>
 
+        <div id="system-tab-audit" class="sub-pane" data-page-pane="system" data-pane="audit">
         <article class="card">
           <div class="card-header">
             <div>
@@ -1746,33 +1843,9 @@ DNSOverTLS=yes</code>
             </table>
           </div>
         </article>
-
-        <details class="card advanced-card">
-          <summary>
-            <span>
-              <strong>Advanced Configuration Document (Raw JSON)</strong>
-              <small>Inspect or edit the complete validated configuration payload with automatic transactional rollback.</small>
-            </span>
-            <span class="chevron">›</span>
-          </summary>
-          <div class="details-body">
-            <div class="warning-box">Edits here are schema-validated and tested with unbound-checkconf before activation. If the resolver fails to start, Lattice automatically rolls back to the previous revision.</div>
-            <label class="field">
-              <span>Configuration JSON</span>
-              <textarea id="config-editor" spellcheck="false" rows="14"></textarea>
-            </label>
-            <button id="save-advanced" type="button" class="button primary">Validate &amp; Apply JSON</button>
-          </div>
-        </details>
-
-        <article class="card account-card">
-          <div>
-            <h2>Administrator Session</h2>
-            <p class="muted">Lattice DNS <span id="system-version">12.0.0-gemini-singularity</span> • Memory-resident CSRF-protected session</p>
-          </div>
-          <button id="logout" type="button" class="button secondary">Sign Out</button>
-        </article>
+        </div>
       </section>
+      <button id="scroll-top-btn" type="button" class="scroll-top-btn hidden" aria-label="Back to top" title="Return to top of view">↑ Top</button>
     </main>
 
     <nav id="mobile-bottom-nav" class="mobile-bottom-nav mobile-only" aria-label="Mobile primary navigation">

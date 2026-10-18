@@ -231,15 +231,17 @@ class DNSCache:
         self.prefetches = 0
 
     @staticmethod
-    def _patch_wire_ttl(wire_body: bytes, new_ttl: int) -> bytes:
-        """Dynamically rewrite Answer RR TTLs in a cached DNS wire body (excluding 2-byte txid)."""
+    def _patch_wire_ttl(wire_body: bytes, new_ttl: int, query_question: bytes = b"") -> bytes:
+        """Dynamically rewrite Answer RR TTLs and preserve 0x20 Question case in a cached DNS wire body."""
         packet = b"\x00\x00" + wire_body
         if len(packet) < 12:
             return wire_body
         _, _, qd, an, _, _ = struct.unpack("!6H", packet[:12])
-        if an == 0:
-            return wire_body
         buf = bytearray(packet)
+        if query_question and len(buf) >= 12 + len(query_question):
+            buf[12 : 12 + len(query_question)] = query_question
+        if an == 0:
+            return bytes(buf[2:])
         pos = 12
         try:
             for _ in range(qd):
@@ -256,64 +258,90 @@ class DNSCache:
                 pos += 10 + rdlen
             return bytes(buf[2:])
         except Exception:
-            return wire_body
+            return bytes(buf[2:])
 
     def get(self, qname: str, qtype: int, do_bit: bool, ident: bytes, allow_stale: bool = False) -> bytes | None:
-        key = (qname.lower().rstrip("."), qtype, do_bit)
+        clean = qname.lower().rstrip(".")
+        key = (clean, qtype, do_bit)
+        alt_key = (clean, qtype, not do_bit)
         now = time.time()
         with self.lock:
             item = self.entries.get(key)
+            used_key = key
+            if not item:
+                item = self.entries.get(alt_key)
+                used_key = alt_key
             if not item:
                 self.misses += 1
                 return None
             if now <= item["expires_at"]:
-                self.entries.move_to_end(key)
+                self.entries.move_to_end(used_key)
                 self.hits += 1
                 item["hits"] += 1
                 rem_ttl = max(1, int(item["expires_at"] - now))
                 return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl)
             if now <= item["stale_until"]:
                 if allow_stale:
-                    self.entries.move_to_end(key)
+                    self.entries.move_to_end(used_key)
                     self.stale_hits += 1
                     item["hits"] += 1
                     return ident + self._patch_wire_ttl(item["wire_body"], 30)
                 self.misses += 1
                 return None
-            self.entries.pop(key, None)
+            self.entries.pop(used_key, None)
             self.misses += 1
             return None
 
-    def get_swr(self, qname: str, qtype: int, do_bit: bool, ident: bytes, swr_enabled: bool = True) -> tuple[bytes | None, str, bool]:
-        """Return (wire_packet, status_tag, should_revalidate_async) with RFC 8767 Stale-While-Revalidate."""
-        key = (qname.lower().rstrip("."), qtype, do_bit)
+    def get_swr(
+        self,
+        qname: str,
+        qtype: int,
+        do_bit: bool,
+        ident: bytes,
+        swr_enabled: bool = True,
+        query_question: bytes = b"",
+    ) -> tuple[bytes | None, str, bool]:
+        """Return (wire_packet, status_tag, should_revalidate_async) with RFC 8767 Stale-While-Revalidate and DO-bit sharing."""
+        clean = qname.lower().rstrip(".")
+        key = (clean, qtype, do_bit)
+        alt_key = (clean, qtype, not do_bit)
         now = time.time()
         with self.lock:
             item = self.entries.get(key)
+            used_key = key
+            if not item:
+                item = self.entries.get(alt_key)
+                used_key = alt_key
             if not item:
                 self.misses += 1
                 return None, "", False
             if now <= item["expires_at"]:
-                self.entries.move_to_end(key)
+                self.entries.move_to_end(used_key)
                 self.hits += 1
                 item["hits"] += 1
                 rem_ttl = max(1, int(item["expires_at"] - now))
                 need_pre = (item["expires_at"] - now <= max(10.0, item.get("ttl", 60) * 0.2)) and (now - item.get("last_prefetch", 0.0) > 10.0)
                 if need_pre:
                     item["last_prefetch"] = now
-                return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl), "cache:l1", need_pre
+                return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl, query_question), "cache:l1", need_pre
             if swr_enabled and now <= item["stale_until"]:
-                self.entries.move_to_end(key)
+                self.entries.move_to_end(used_key)
                 self.stale_hits += 1
                 item["hits"] += 1
                 need_reval = (now - item.get("last_prefetch", 0.0)) > 5.0
                 if need_reval:
                     item["last_prefetch"] = now
-                return ident + self._patch_wire_ttl(item["wire_body"], 30), "cache:swr", need_reval
+                return ident + self._patch_wire_ttl(item["wire_body"], 30, query_question), "cache:swr", need_reval
             if now > item["stale_until"]:
-                self.entries.pop(key, None)
+                self.entries.pop(used_key, None)
             self.misses += 1
             return None, "", False
+
+    def get_cnames(self, qname: str, qtype: int) -> list[str]:
+        clean = qname.lower().rstrip(".")
+        with self.lock:
+            item = self.entries.get((clean, qtype, True)) or self.entries.get((clean, qtype, False))
+            return list(item.get("cnames", [])) if item else []
 
     def evict(self, domain: str) -> int:
         clean = domain.lower().rstrip(".")
@@ -556,59 +584,186 @@ def is_rebinding_ip(ip_str: str) -> bool:
     return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified)
 
 
-class UpstreamTLSPool:
-    """Thread-safe TLS 1.3 keep-alive socket pool (24 sockets/upstream) with dead-socket eviction and EWMA latency routing."""
+class _MuxWaiter:
+    __slots__ = ("event", "response", "error")
 
-    def __init__(self, max_idle: float = 40.0, max_per_upstream: int = 24):
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.response: bytes = b""
+        self.error: Exception | None = None
+
+
+class _MuxTLSConn:
+    """RFC 7858 Multiplexed DNS-over-TLS channel allowing 64 concurrent queries over a single TLS 1.3 socket."""
+
+    def __init__(self, conn: ssl.SSLSocket, key: tuple[str, int, str]):
+        self.conn = conn
+        self.key = key
+        self.write_lock = threading.Lock()
+        self.pending_lock = threading.Lock()
+        self.pending: dict[bytes, _MuxWaiter] = {}
+        self.closed = False
+        self.last_used = time.monotonic()
+        self.reader = threading.Thread(target=self._reader_loop, daemon=True, name=f"dot-mux-{key[0]}")
+        self.reader.start()
+
+    def _reader_loop(self) -> None:
+        try:
+            while not self.closed:
+                hdr = recv_exact(self.conn, 2)
+                length = struct.unpack("!H", hdr)[0]
+                if length < 12 or length > 65535:
+                    break
+                pkt = recv_exact(self.conn, length)
+                self.last_used = time.monotonic()
+                txid = pkt[:2]
+                with self.pending_lock:
+                    waiter = self.pending.pop(txid, None)
+                if waiter is not None:
+                    waiter.response = pkt
+                    waiter.event.set()
+        except Exception as exc:
+            self._fail_all(exc)
+        finally:
+            self.close()
+
+    def _fail_all(self, exc: Exception) -> None:
+        with self.pending_lock:
+            waiters = list(self.pending.values())
+            self.pending.clear()
+        for w in waiters:
+            w.error = exc
+            w.event.set()
+
+    def is_healthy(self, max_idle: float = 55.0) -> bool:
+        if self.closed:
+            return False
+        if time.monotonic() - self.last_used > max_idle:
+            self.close()
+            return False
+        try:
+            return self.conn.fileno() >= 0
+        except Exception:
+            return False
+
+    def query(self, out_pkt: bytes, timeout: float = 1.4) -> bytes:
+        if self.closed:
+            raise OSError("Multiplexed DoT socket is closed")
+        waiter = _MuxWaiter()
+        with self.pending_lock:
+            if self.closed:
+                raise OSError("Multiplexed DoT socket is closed")
+            txid = out_pkt[:2]
+            while txid in self.pending:
+                txid = os.urandom(2)
+            send_pkt = txid + out_pkt[2:]
+            self.pending[txid] = waiter
+
+        framed = struct.pack("!H", len(send_pkt)) + send_pkt
+        try:
+            with self.write_lock:
+                if self.closed:
+                    raise OSError("Multiplexed DoT socket closed before write")
+                self.conn.sendall(framed)
+                self.last_used = time.monotonic()
+        except Exception as exc:
+            with self.pending_lock:
+                self.pending.pop(txid, None)
+            self.close()
+            raise OSError(f"DoT mux write failed: {exc}") from exc
+
+        if not waiter.event.wait(timeout=timeout):
+            with self.pending_lock:
+                self.pending.pop(txid, None)
+            raise TimeoutError("DoT multiplexed response timeout")
+        if waiter.error is not None or len(waiter.response) < 12:
+            raise OSError(str(waiter.error or "Empty DoT response"))
+        return out_pkt[:2] + waiter.response[2:]
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self._fail_all(OSError("Connection closed"))
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
+
+class UpstreamTLSPool:
+    """RFC 7858 Multiplexed TLS 1.3 connection pool with Connection Singleflight and EWMA latency routing."""
+
+    def __init__(self, max_idle: float = 55.0, max_per_upstream: int = 4):
         self.max_idle = max_idle
         self.max_per_upstream = max_per_upstream
         self.lock = threading.Lock()
-        self.pool: dict[tuple[str, int, str], list[tuple[ssl.SSLSocket, float]]] = collections.defaultdict(list)
+        self.pool: dict[tuple[str, int, str], list[_MuxTLSConn]] = collections.defaultdict(list)
+        self._connecting: dict[tuple[str, int, str], threading.Event] = {}
         self.latencies: dict[str, float] = {}
         self.pool_hits = 0
         self.pool_misses = 0
         self.context = ssl.create_default_context()
 
-    @staticmethod
-    def _is_socket_alive(conn: ssl.SSLSocket) -> bool:
-        try:
-            if conn.fileno() < 0:
-                return False
-            readable, _, exceptional = select.select([conn], [], [conn], 0.0)
-            if readable or exceptional:
-                # An idle client socket waiting to send a request must not have unread EOF/FIN/alerts
-                return False
-            return True
-        except Exception:
-            return False
-
-    def _borrow(self, key: tuple[str, int, str]) -> ssl.SSLSocket | None:
-        now = time.monotonic()
+    def _get_or_connect(self, key: tuple[str, int, str], force_new: bool = False) -> _MuxTLSConn:
+        addr, port, sni = key
+        wait_event: threading.Event | None = None
         with self.lock:
-            items = self.pool.get(key, [])
-            while items:
-                conn, ts = items.pop()
-                if now - ts <= self.max_idle and self._is_socket_alive(conn):
+            if not force_new:
+                healthy = [m for m in self.pool.get(key, []) if m.is_healthy(self.max_idle)]
+                self.pool[key] = healthy
+                for mux in healthy:
+                    if len(mux.pending) < 48:
+                        self.pool_hits += 1
+                        return mux
+                if healthy:
                     self.pool_hits += 1
-                    return conn
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            self.pool_misses += 1
-            return None
+                    return min(healthy, key=lambda m: len(m.pending))
+            if key in self._connecting and not force_new:
+                wait_event = self._connecting[key]
+            else:
+                conn_ev = threading.Event()
+                self._connecting[key] = conn_ev
 
-    def _release(self, key: tuple[str, int, str], conn: ssl.SSLSocket) -> None:
-        now = time.monotonic()
-        with self.lock:
-            bucket = self.pool[key]
-            while len(bucket) >= self.max_per_upstream:
-                old_conn, _ = bucket.pop(0)
+        if wait_event is not None:
+            wait_event.wait(timeout=1.8)
+            with self.lock:
+                healthy = [m for m in self.pool.get(key, []) if m.is_healthy(self.max_idle)]
+                self.pool[key] = healthy
+                if healthy:
+                    self.pool_hits += 1
+                    return min(healthy, key=lambda m: len(m.pending))
+
+        self.pool_misses += 1
+        try:
+            raw = socket.create_connection((addr, port), timeout=1.8)
+            for opt_level, opt_name, opt_val in (
+                (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
+                (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+                (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", 4), 15),
+                (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", 5), 5),
+                (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", 6), 2),
+            ):
                 try:
-                    old_conn.close()
-                except Exception:
+                    raw.setsockopt(opt_level, opt_name, opt_val)
+                except OSError:
                     pass
-            bucket.append((conn, now))
+            tls_conn = self.context.wrap_socket(raw, server_hostname=sni)
+            tls_conn.settimeout(60.0)
+            mux = _MuxTLSConn(tls_conn, key)
+            with self.lock:
+                bucket = [m for m in self.pool[key] if m.is_healthy(self.max_idle)]
+                while len(bucket) >= self.max_per_upstream:
+                    old_mux = bucket.pop(0)
+                    old_mux.close()
+                bucket.append(mux)
+                self.pool[key] = bucket
+            return mux
+        finally:
+            with self.lock:
+                ev = self._connecting.pop(key, None)
+                if ev is not None:
+                    ev.set()
 
     def record_latency(self, uid: str, ms: float) -> None:
         with self.lock:
@@ -620,12 +775,9 @@ class UpstreamTLSPool:
             closed = 0
             for bucket in self.pool.values():
                 while bucket:
-                    conn, _ = bucket.pop()
+                    mux = bucket.pop()
                     closed += 1
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+                    mux.close()
             self.pool.clear()
             return closed
 
@@ -635,60 +787,24 @@ class UpstreamTLSPool:
         sni = upstream.get("sni") or upstream.get("tls_hostname") or addr
         uid = upstream.get("id", addr)
         key = (addr, port, sni)
-        framed = struct.pack("!H", len(out_pkt)) + out_pkt
         t0 = time.monotonic()
 
-        conn = self._borrow(key)
-        if conn is not None:
-            try:
-                conn.settimeout(0.95)
-                conn.sendall(framed)
-                length = struct.unpack("!H", recv_exact(conn, 2))[0]
-                if 12 <= length <= 65535:
-                    resp = recv_exact(conn, length)
-                    self._release(key, conn)
-                    self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
-                    return resp
-            except Exception:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-        t0 = time.monotonic()
-        raw = socket.create_connection((addr, port), timeout=1.8)
-        for opt_level, opt_name, opt_val in (
-            (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
-            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", 4), 15),
-            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", 5), 5),
-            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", 6), 2),
-        ):
-            try:
-                raw.setsockopt(opt_level, opt_name, opt_val)
-            except OSError:
-                pass
-        tls_conn = self.context.wrap_socket(raw, server_hostname=sni)
+        mux = self._get_or_connect(key, force_new=False)
         try:
-            tls_conn.settimeout(1.8)
-            tls_conn.sendall(framed)
-            length = struct.unpack("!H", recv_exact(tls_conn, 2))[0]
-            if not (12 <= length <= 65535):
-                raise ValueError("Invalid DoT upstream response length")
-            resp = recv_exact(tls_conn, length)
-            self._release(key, tls_conn)
+            resp = mux.query(out_pkt, timeout=1.3)
             self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
             return resp
         except Exception:
-            try:
-                tls_conn.close()
-            except Exception:
-                pass
-            raise
+            mux.close()
+            t0 = time.monotonic()
+            fresh_mux = self._get_or_connect(key, force_new=True)
+            resp = fresh_mux.query(out_pkt, timeout=1.6)
+            self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
+            return resp
 
     def stats(self) -> dict[str, Any]:
         with self.lock:
-            active_sockets = sum(len(v) for v in self.pool.values())
+            active_sockets = sum(len([m for m in v if not m.closed]) for v in self.pool.values())
             return {
                 "active_sockets": active_sockets,
                 "pool_hits": self.pool_hits,
@@ -999,12 +1115,12 @@ class DNSGateway:
 
     def _forward_query(self, packet: bytes, name: str, qtype: int) -> tuple[bytes, str]:
         """Serve L1 wire cache (with SWR), local records, and Singleflight-coalesced parallel hedged DoT resolution."""
-        _, _, _, _, do_bit = _parse_question_section(packet, allow_response=False)
+        _, _, q_end, _, do_bit = _parse_question_section(packet, allow_response=False)
         cache_cfg = self.store.config.get("cache", {})
         serve_expired = bool(cache_cfg.get("serve_expired", True))
         stale_ttl = int(cache_cfg.get("serve_expired_ttl", 3600))
 
-        cached, cache_tag, need_reval = self.cache.get_swr(name, qtype, do_bit, packet[:2], swr_enabled=serve_expired)
+        cached, cache_tag, need_reval = self.cache.get_swr(name, qtype, do_bit, packet[:2], swr_enabled=serve_expired, query_question=packet[12:q_end])
         if cached is not None:
             with self.metrics_lock:
                 self.metrics["cache_hits"] += 1
@@ -1135,15 +1251,8 @@ class DNSGateway:
                     # CNAME Cloaking & DNS Rebinding Inspection
                     if (result[3] & 15) == 0 and not self.store.is_blocking_paused():
                         if fb_note in ("cache:l1", "cache:swr"):
-                            # Fast-path CNAME check using pre-extracted cnames list from DNSCache
-                            clean_q = name.lower().rstrip(".")
-                            with self.cache.lock:
-                                cached_cnames = [
-                                    c
-                                    for k, v in self.cache.entries.items()
-                                    if k[0] == clean_q and k[1] == qtype
-                                    for c in v.get("cnames", [])
-                                ]
+                            # O(1) CNAME check using pre-extracted cnames list from DNSCache
+                            cached_cnames = self.cache.get_cnames(name, qtype)
                             for cname_target_name in cached_cnames:
                                 cname_dec = self.policy.decide(client, cname_target_name)
                                 if cname_dec.action == "deny":

@@ -231,6 +231,7 @@ class Lattice:
             "dashboard": self.store.dashboard(window=window),
             "threat": self.store.threat_snapshot(),
             "upstreams": health,
+            "dns_record": self.store.meta("dns_record"),
             "jobs": self.jobs.snapshot(),
         }
 
@@ -320,14 +321,47 @@ class Lattice:
         self.store.audit("Configuration applied")
         return new_config
 
-    def sync_cloudflare(self) -> dict[str, Any]:
+    def _save_private_overrides(self, body: dict[str, Any] | None) -> None:
+        if not isinstance(body, dict):
+            return
+        if not any(k in body for k in ("hostname", "email", "public_target", "frp_server", "cloudflare_token")):
+            return
+        cfg_copy = copy.deepcopy(self.store.config)
+        if body.get("hostname") is not None and str(body["hostname"]).strip():
+            cfg_copy["hostname"] = str(body["hostname"]).strip()
+        if body.get("email") is not None and str(body["email"]).strip():
+            cfg_copy["email"] = str(body["email"]).strip()
+        if body.get("frp_server") is not None and str(body["frp_server"]).strip():
+            cfg_copy["frp"]["server"] = str(body["frp_server"]).strip()
+        raw_target = str(body.get("public_target") or "").strip()
+        if raw_target:
+            cfg_copy["public_target"] = raw_target
+        elif not cfg_copy.get("public_target") and cfg_copy["frp"].get("server"):
+            cfg_copy["public_target"] = cfg_copy["frp"]["server"]
+        cf_tok = str(body.get("cloudflare_token") or "").strip()
+        if cf_tok:
+            self.store.set_secret("cloudflare", cf_tok)
+        self.store.set_config(validate_config(cfg_copy))
+
+    def sync_cloudflare(self, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._save_private_overrides(body)
         token = self.store.secret("cloudflare")
         cfg = self.store.config
         if not token:
-            raise ValueError("Cloudflare token is not saved")
-        result = CloudflareDNS(token).sync(cfg["hostname"], cfg["public_target"])
+            raise ValueError("Cloudflare token is not saved — enter your token in the Cloudflare API Token box")
+        fqdn = cfg.get("hostname", "").strip()
+        if not fqdn:
+            raise ValueError("Private DNS Hostname (FQDN) is required")
+        target_addr = cfg.get("public_target", "").strip() or cfg.get("frp", {}).get("server", "").strip()
+        if not target_addr:
+            raise ValueError("Public Target IP/Host or FRP Server Address is required")
+        if not cfg.get("public_target") and target_addr:
+            cfg_copy = copy.deepcopy(cfg)
+            cfg_copy["public_target"] = target_addr
+            self.store.set_config(validate_config(cfg_copy))
+        result = CloudflareDNS(token).sync(fqdn, target_addr)
         self.store.set_meta("dns_record", result)
-        self.store.audit("Cloudflare DNS synchronized", result.get("name", ""))
+        self.store.audit("Cloudflare DNS synchronized", f"{result.get('type', '')} {result.get('name', '')} -> {result.get('content', '')}")
         return result
 
     @staticmethod
@@ -1444,7 +1478,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(202, self.app.jobs.launch("feed_refresh", self.app.feeds.refresh_all))
                 return self._json(202, self.app.jobs.launch("feed_refresh", lambda: self.app.feeds.refresh_one(int(feed_id))))
             if path == "/api/tls/issue":
-                agree = self._body().get("agree") is True
+                body = self._body()
+                self.app._save_private_overrides(body)
+                agree = body.get("agree") is True
                 return self._json(202, self.app.jobs.launch("certificate", lambda: self.app.certs.issue(agree)))
             if path == "/api/tls/self-signed":
                 body = self._body()
@@ -1471,7 +1507,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.store.audit("TLS certificate installed", fqdn)
                 return self._json(200, result)
             if path == "/api/cloudflare/sync":
-                return self._json(202, self.app.jobs.launch("cloudflare_sync", self.app.sync_cloudflare))
+                body = self._body()
+                if body.get("sync_now"):
+                    record = self.app.sync_cloudflare(body)
+                    return self._json(200, {"ok": True, "record": record, "config": self.app.store.config, "job": "cloudflare_sync"})
+                return self._json(202, self.app.jobs.launch("cloudflare_sync", lambda: self.app.sync_cloudflare(body)))
             if path == "/api/frp/restart":
                 return self._json(202, self.app.jobs.launch("frp_restart", self.app.frp.apply))
             if path == "/api/cache/evict":

@@ -3793,3 +3793,236 @@ td .code-pill,
   color: #ffffff;
   border-color: var(--primary);
 }
+
+/* ==================== V12.4 ANTI-DIZZINESS SINGLE-SCREEN WORKSPACE ==================== */
+
+html {
+  scroll-behavior: auto !important;
+}
+
+.sub-pane {
+  display: none;
+}
+
+.sub-pane.active {
+  display: block;
+}
+
+/* Sticky Topbar on Desktop & Mobile to Anchor Visual Horizon (Anti-Vertigo) */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(10px);
+  min-height: 66px;
+  padding: 10px 0;
+  margin-bottom: 14px;
+}
+
+.page-subnav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  width: 100%;
+  box-shadow: var(--shadow-sm);
+}
+
+.page-subnav .subnav-item {
+  flex: 1 1 auto;
+  text-align: center;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+}
+
+/* Bounded Internal Scroll Containers to Eliminate Long-Page Scrolling */
+#page-queries .table-wrap {
+  max-height: calc(100vh - 235px);
+  overflow-y: auto;
+}
+
+#blocking-rules .table-wrap,
+#blocking-devices .table-wrap,
+#l1-cache-card .table-wrap {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--surface-soft);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+#catalog-grid {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#presets-grid {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#feed-list {
+  max-height: 390px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#dash-live-list {
+  max-height: 295px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* 2-Column Compact Grid for DNS Security & Caching Options on Desktop */
+@media (min-width: 960px) {
+  #dns-tab-security .settings-list,
+  #dns-tab-upstreams .settings-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+/* Compact Viewport Density Mode (Default Active to Prevent Scrolling Dizziness) */
+html[data-density="compact"] .main {
+  padding-bottom: 28px;
+}
+
+html[data-density="compact"] .card {
+  padding: 15px 17px;
+  margin-bottom: 12px;
+}
+
+html[data-density="compact"] .card-header {
+  margin-bottom: 11px;
+}
+
+html[data-density="compact"] .content-grid {
+  gap: 12px;
+}
+
+html[data-density="compact"] .stats-grid {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+html[data-density="compact"] .stat-card {
+  padding: 12px 14px;
+}
+
+html[data-density="compact"] .stat-value {
+  font-size: 22px;
+  margin: 7px 0 3px;
+}
+
+html[data-density="compact"] .telemetry-ribbon {
+  padding: 9px 14px;
+  margin-bottom: 12px;
+}
+
+html[data-density="compact"] .dashboard-toolbar {
+  margin-bottom: 10px;
+}
+
+html[data-density="compact"] .section-action-bar {
+  padding: 11px 16px;
+  margin-bottom: 11px;
+}
+
+html[data-density="compact"] .chart-container {
+  height: 155px;
+}
+
+html[data-density="compact"] #traffic-chart {
+  height: 150px;
+}
+
+html[data-density="compact"] .chart-card {
+  min-height: 220px;
+}
+
+html[data-density="compact"] .category-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+html[data-density="compact"] .category-card {
+  padding: 9px 12px;
+}
+
+html[data-density="compact"] .setting-row {
+  padding: 8px 11px;
+}
+
+html[data-density="compact"] .health-row {
+  padding: 6px 10px;
+}
+
+html[data-density="compact"] .setup-guide {
+  padding: 12px 16px;
+  margin-bottom: 10px;
+}
+
+html[data-density="compact"] .setup-step {
+  padding: 7px 11px;
+}
+
+html[data-density="compact"] td,
+html[data-density="compact"] th {
+  padding: 7px 11px;
+}
+
+/* Floating Back-to-Top Quick Button */
+.scroll-top-btn {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 75;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--primary);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 750;
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+}
+
+.scroll-top-btn:hover {
+  background: var(--primary-hover);
+}
+
+@media (max-width: 820px) {
+  .scroll-top-btn {
+    bottom: 74px;
+    right: 14px;
+  }
+  html[data-density="compact"] .category-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

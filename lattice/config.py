@@ -80,10 +80,11 @@ def hostname(value: Any, field: str = "hostname", allow_empty: bool = False) -> 
     value = value.strip().rstrip(".").lower()
     if not value and allow_empty:
         return ""
-    try:
-        value = value.encode("idna").decode("ascii")
-    except UnicodeError as exc:
-        raise ValueError(f"{field} is not a valid hostname") from exc
+    if not value.isascii():
+        try:
+            value = value.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ValueError(f"{field} is not a valid hostname") from exc
     if len(value) > 253 or not DOMAIN_RE.fullmatch(value):
         raise ValueError(f"{field} is not a valid hostname")
     return value
@@ -311,5 +312,7 @@ def validate_config(raw: Any) -> dict[str, Any]:
         raise ValueError("FRP server is required when FRP is enabled")
     if frp["remote_port"] != 853:
         raise ValueError("Android Private DNS requires the public FRP port to be 853")
+    if not cfg["public_target"] and frp["server"]:
+        cfg["public_target"] = frp["server"]
 
     return cfg
