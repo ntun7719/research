@@ -1519,7 +1519,7 @@ class FlagshipV5Tests(unittest.TestCase):
     def test_youtube_shorts_zero_stall_streaming_engine(self):
         from unittest.mock import patch
         from lattice.app import Lattice
-        from lattice.transport import _encode_name, rewrite_response
+        from lattice.transport import _encode_name, recv_exact, rewrite_response
 
         app = Lattice(self.tmp.name, resolver_port=15596, dot_port=18943, frp_local_port=18944)
         try:
@@ -1540,16 +1540,30 @@ class FlagshipV5Tests(unittest.TestCase):
             self.assertEqual(app.policy.decide("192.168.1.50", "jnn-pa.googleapis.com").action, "allow")
             self.assertEqual(app.policy.decide("192.168.1.50", "rr1---sn-i3b7kn7d.googlevideo.com").action, "allow")
 
-            # 2. Verify instant <1ms HTTPS (TYPE65) & SVCB (TYPE64) NODATA synthesis to prevent 3-5s mid-Short QUIC stalls
-            q_https = (
-                struct.pack("!6H", 0x7101, 0x0100, 1, 0, 0, 0)
-                + _encode_name("rr1---sn-i3b7kn7d.googlevideo.com")
-                + struct.pack("!HH", 65, 1)
-            )
-            resp_https, log_https = app.gateway._handle_query_core(q_https, "192.168.1.50", "dot")
-            self.assertEqual(resp_https[3] & 15, 0)  # NOERROR
-            self.assertEqual(struct.unpack("!H", resp_https[6:8])[0], 0)  # 0 answers (NODATA)
-            self.assertIn("streaming:tcp-fastpath", log_https[7])
+            # 2. Verify 60 concurrent pipelined DoT queries over a single TLS connection never collide between SSL_read and SSL_write
+            app.certs.generate_self_signed("dns.test")
+            app.gateway.start()
+            client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            client_ctx.check_hostname = False
+            client_ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection(("127.0.0.1", app.gateway.direct_port), timeout=4.0) as raw:
+                with client_ctx.wrap_socket(raw, server_hostname="dns.test") as tls_sock:
+                    tls_sock.settimeout(4.0)
+                    burst = bytearray()
+                    expected_ids = set()
+                    for idx in range(60):
+                        qid = 0x7200 + idx
+                        expected_ids.add(qid)
+                        qpkt = _question(f"probe-{idx}.dnsotls-ds.metric.gstatic.com", ident=qid)
+                        burst.extend(struct.pack("!H", len(qpkt)) + qpkt)
+                    tls_sock.sendall(bytes(burst))
+                    got_ids = set()
+                    for _ in range(60):
+                        rlen = struct.unpack("!H", recv_exact(tls_sock, 2))[0]
+                        rpkt = recv_exact(tls_sock, rlen)
+                        self.assertEqual(rpkt[3] & 15, 0)
+                        got_ids.add(struct.unpack("!H", rpkt[:2])[0])
+                    self.assertEqual(got_ids, expected_ids)
 
             # 3. Verify 180s minimum TTL floor and speculative sibling shard pre-warming (rr1..rr5---sn-*.googlevideo.com)
             queried_upstreams = []

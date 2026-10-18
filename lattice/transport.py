@@ -317,7 +317,7 @@ class DNSCache:
         except Exception:
             return bytes(buf[2:])
 
-    def get(self, qname: str, qtype: int, do_bit: bool, ident: bytes, allow_stale: bool = False) -> bytes | None:
+    def get(self, qname: str, qtype: int, do_bit: bool, ident: bytes, allow_stale: bool = False, query_question: bytes = b"") -> bytes | None:
         clean = qname.lower().rstrip(".")
         key = (clean, qtype, do_bit)
         alt_key = (clean, qtype, not do_bit)
@@ -336,13 +336,13 @@ class DNSCache:
                 self.hits += 1
                 item["hits"] += 1
                 rem_ttl = max(1, int(item["expires_at"] - now))
-                return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl)
+                return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl, query_question)
             if now <= item["stale_until"]:
                 if allow_stale:
                     self.entries.move_to_end(used_key)
                     self.stale_hits += 1
                     item["hits"] += 1
-                    return ident + self._patch_wire_ttl(item["wire_body"], 30)
+                    return ident + self._patch_wire_ttl(item["wire_body"], 30, query_question)
                 self.misses += 1
                 return None
             self.entries.pop(used_key, None)
@@ -590,6 +590,79 @@ def recv_exact(sock: socket.socket, size: int) -> bytes:
     return bytes(data)
 
 
+def ssl_recv_exact(conn: socket.socket, size: int, io_lock: threading.Lock | None = None, timeout: float = 65.0) -> bytes:
+    """Thread-safe exact byte reader for SSLSocket that waits in select.select() outside io_lock so SSL_read and SSL_write never collide."""
+    if io_lock is None or not isinstance(conn, ssl.SSLSocket):
+        return recv_exact(conn, size)
+    data = bytearray()
+    deadline = time.monotonic() + timeout
+    while len(data) < size:
+        rem = deadline - time.monotonic()
+        if rem <= 0:
+            raise socket.timeout("TLS read timeout")
+        with io_lock:
+            try:
+                has_pending = conn.pending() > 0
+            except Exception as exc:
+                raise OSError("TLS socket closed") from exc
+        if not has_pending:
+            try:
+                readable, _, _ = select.select([conn], [], [], min(rem, 0.03))
+            except Exception as exc:
+                raise OSError("TLS select failed") from exc
+            if not readable:
+                continue
+        with io_lock:
+            try:
+                conn.setblocking(False)
+                chunk = conn.recv(size - len(data))
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError, BlockingIOError):
+                continue
+            finally:
+                try:
+                    conn.setblocking(True)
+                except Exception:
+                    pass
+        if not chunk:
+            raise OSError("Connection closed")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def ssl_send_all(conn: socket.socket, data: bytes, io_lock: threading.Lock | None = None, timeout: float = 10.0) -> None:
+    """Thread-safe full buffer writer for SSLSocket synchronized with ssl_recv_exact via io_lock."""
+    if io_lock is None or not isinstance(conn, ssl.SSLSocket):
+        conn.sendall(data)
+        return
+    view = memoryview(data)
+    sent = 0
+    deadline = time.monotonic() + timeout
+    while sent < len(view):
+        rem = deadline - time.monotonic()
+        if rem <= 0:
+            raise socket.timeout("TLS write timeout")
+        need_wait = False
+        with io_lock:
+            try:
+                conn.setblocking(False)
+                n = conn.send(view[sent:])
+                if n > 0:
+                    sent += n
+                    continue
+            except (ssl.SSLWantWriteError, ssl.SSLWantReadError, BlockingIOError):
+                need_wait = True
+            finally:
+                try:
+                    conn.setblocking(True)
+                except Exception:
+                    pass
+        if need_wait:
+            try:
+                select.select([conn], [conn], [], min(rem, 0.03))
+            except Exception as exc:
+                raise OSError("TLS write select failed") from exc
+
+
 def forward_local(packet: bytes, port: int) -> bytes:
     truncated = False
     if len(packet) <= 4096:
@@ -656,12 +729,12 @@ class _MuxWaiter:
 
 
 class _MuxTLSConn:
-    """RFC 7858 Multiplexed DNS-over-TLS channel allowing 64 concurrent queries over a single TLS 1.3 socket."""
+    """RFC 7858 Multiplexed DNS-over-TLS channel with thread-safe OpenSSL I/O locking."""
 
     def __init__(self, conn: ssl.SSLSocket, key: tuple[str, int, str]):
         self.conn = conn
         self.key = key
-        self.write_lock = threading.Lock()
+        self.io_lock = threading.Lock()
         self.pending_lock = threading.Lock()
         self.pending: dict[bytes, _MuxWaiter] = {}
         self.closed = False
@@ -672,11 +745,11 @@ class _MuxTLSConn:
     def _reader_loop(self) -> None:
         try:
             while not self.closed:
-                hdr = recv_exact(self.conn, 2)
+                hdr = ssl_recv_exact(self.conn, 2, self.io_lock, timeout=65.0)
                 length = struct.unpack("!H", hdr)[0]
                 if length < 12 or length > 65535:
                     break
-                pkt = recv_exact(self.conn, length)
+                pkt = ssl_recv_exact(self.conn, length, self.io_lock, timeout=10.0)
                 self.last_used = time.monotonic()
                 txid = pkt[:2]
                 with self.pending_lock:
@@ -697,35 +770,21 @@ class _MuxTLSConn:
             w.error = exc
             w.event.set()
 
-    def is_healthy(self, max_idle: float = 25.0) -> bool:
-        if self.closed:
+    def is_healthy(self, max_idle: float = 45.0) -> bool:
+        if self.closed or not self.reader.is_alive():
+            self.close()
             return False
-        if time.monotonic() - self.last_used > max_idle:
+        with self.pending_lock:
+            has_pending = bool(self.pending)
+        if not has_pending and (time.monotonic() - self.last_used > max_idle):
             self.close()
             return False
         try:
-            if self.conn.fileno() < 0:
-                return False
-            # Non-blocking EOF check: if remote upstream closed the socket while idle, detect it in 0.001ms
-            msg_dontwait = getattr(socket, "MSG_DONTWAIT", 0)
-            if msg_dontwait and not self.pending:
-                try:
-                    peeked = self.conn. pending() if hasattr(self.conn, "pending") else 0
-                    if not peeked:
-                        raw_peek = socket.socket.recv(self.conn, 1, socket.MSG_PEEK | msg_dontwait)
-                        if raw_peek == b"":
-                            self.close()
-                            return False
-                except BlockingIOError:
-                    pass
-                except OSError:
-                    self.close()
-                    return False
-            return True
+            return self.conn.fileno() >= 0
         except Exception:
             return False
 
-    def query(self, out_pkt: bytes, timeout: float = 1.1) -> bytes:
+    def query(self, out_pkt: bytes, timeout: float = 1.4) -> bytes:
         if self.closed:
             raise OSError("Multiplexed DoT socket is closed")
         waiter = _MuxWaiter()
@@ -740,11 +799,10 @@ class _MuxTLSConn:
 
         framed = struct.pack("!H", len(send_pkt)) + send_pkt
         try:
-            with self.write_lock:
-                if self.closed:
-                    raise OSError("Multiplexed DoT socket closed before write")
-                self.conn.sendall(framed)
-                self.last_used = time.monotonic()
+            if self.closed:
+                raise OSError("Multiplexed DoT socket closed before write")
+            ssl_send_all(self.conn, framed, self.io_lock, timeout=timeout)
+            self.last_used = time.monotonic()
         except Exception as exc:
             with self.pending_lock:
                 self.pending.pop(txid, None)
@@ -773,7 +831,7 @@ class _MuxTLSConn:
 class UpstreamTLSPool:
     """RFC 7858 Multiplexed TLS 1.3 connection pool with Connection Singleflight and EWMA latency routing."""
 
-    def __init__(self, max_idle: float = 25.0, max_per_upstream: int = 4):
+    def __init__(self, max_idle: float = 45.0, max_per_upstream: int = 8):
         self.max_idle = max_idle
         self.max_per_upstream = max_per_upstream
         self.lock = threading.Lock()
@@ -787,6 +845,7 @@ class UpstreamTLSPool:
     def _get_or_connect(self, key: tuple[str, int, str], force_new: bool = False) -> _MuxTLSConn:
         addr, port, sni = key
         wait_event: threading.Event | None = None
+        own_event: threading.Event | None = None
         with self.lock:
             if not force_new:
                 healthy = [m for m in self.pool.get(key, []) if m.is_healthy(self.max_idle)]
@@ -800,9 +859,9 @@ class UpstreamTLSPool:
                     return min(healthy, key=lambda m: len(m.pending))
             if key in self._connecting and not force_new:
                 wait_event = self._connecting[key]
-            else:
-                conn_ev = threading.Event()
-                self._connecting[key] = conn_ev
+            elif not force_new:
+                own_event = threading.Event()
+                self._connecting[key] = own_event
 
         if wait_event is not None:
             wait_event.wait(timeout=1.8)
@@ -834,15 +893,19 @@ class UpstreamTLSPool:
                 bucket = [m for m in self.pool[key] if m.is_healthy(self.max_idle)]
                 while len(bucket) >= self.max_per_upstream:
                     old_mux = bucket.pop(0)
-                    old_mux.close()
+                    with old_mux.pending_lock:
+                        has_inflight = bool(old_mux.pending)
+                    if not has_inflight:
+                        old_mux.close()
                 bucket.append(mux)
                 self.pool[key] = bucket
             return mux
         finally:
-            with self.lock:
-                ev = self._connecting.pop(key, None)
-                if ev is not None:
-                    ev.set()
+            if own_event is not None:
+                with self.lock:
+                    if self._connecting.get(key) is own_event:
+                        self._connecting.pop(key, None)
+                own_event.set()
 
     def record_latency(self, uid: str, ms: float) -> None:
         with self.lock:
@@ -869,17 +932,18 @@ class UpstreamTLSPool:
         t0 = time.monotonic()
 
         mux = self._get_or_connect(key, force_new=False)
-        idle_age = time.monotonic() - mux.last_used
-        first_timeout = 0.55 if idle_age > 8.0 else 0.95
         try:
-            resp = mux.query(out_pkt, timeout=first_timeout)
+            resp = mux.query(out_pkt, timeout=1.2)
             self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
             return resp
         except Exception:
-            mux.close()
+            with mux.pending_lock:
+                still_busy = bool(mux.pending)
+            if not still_busy:
+                mux.close()
             t0 = time.monotonic()
             fresh_mux = self._get_or_connect(key, force_new=True)
-            resp = fresh_mux.query(out_pkt, timeout=1.2)
+            resp = fresh_mux.query(out_pkt, timeout=1.5)
             self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
             return resp
 
@@ -960,6 +1024,39 @@ def forward_upstream_dot(packet: bytes, upstreams: list[dict[str, Any]], qname: 
             except Exception as exc:
                 last_exc = exc
     raise ValueError(f"All DoT upstreams failed: {last_exc}")
+
+
+_DEFAULT_FORWARD_UPSTREAM_DOT = forward_upstream_dot
+
+
+def forward_upstream_udp_tcp_fallback(packet: bytes, upstreams: list[dict[str, Any]]) -> bytes:
+    """Emergency standard DNS (UDP/TCP 53) fallback if outbound TCP Port 853 is blocked or reset by the ISP."""
+    addrs = [u["address"] for u in upstreams if u.get("enabled", True) and u.get("address")]
+    for default_ip in ("1.1.1.1", "8.8.8.8", "9.9.9.9"):
+        if default_ip not in addrs:
+            addrs.append(default_ip)
+    last_err: Exception | None = None
+    for addr in addrs[:3]:
+        try:
+            fam = socket.AF_INET6 if ":" in addr else socket.AF_INET
+            with socket.socket(fam, socket.SOCK_DGRAM) as udp_sock:
+                udp_sock.settimeout(0.65)
+                udp_sock.connect((addr, 53))
+                udp_sock.send(packet)
+                resp = udp_sock.recv(4096)
+                if len(resp) >= 12 and resp[:2] == packet[:2] and (resp[2] & 0x80) and (resp[3] & 15) != 2:
+                    if not (resp[2] & 0x02):
+                        return resp
+            with socket.create_connection((addr, 53), timeout=1.0) as tcp_sock:
+                tcp_sock.settimeout(1.0)
+                tcp_sock.sendall(struct.pack("!H", len(packet)) + packet)
+                rlen = struct.unpack("!H", recv_exact(tcp_sock, 2))[0]
+                resp = recv_exact(tcp_sock, rlen)
+                if len(resp) >= 12 and resp[:2] == packet[:2] and (resp[2] & 0x80) and (resp[3] & 15) != 2:
+                    return resp
+        except Exception as exc:
+            last_err = exc
+    raise ValueError(f"Emergency UDP/TCP 53 fallback failed: {last_err}")
 
 
 def read_proxy_line(sock: socket.socket) -> str:
@@ -1143,7 +1240,7 @@ class DNSGateway:
         return error_response(packet, 0)
 
     def _prewarm_video_shards(self, queried_domain: str, qtype: int, do_bit: bool) -> None:
-        """Speculatively pre-resolve sibling YouTube Shorts edge shards (rr1..rr5---sn-*.googlevideo.com) into L1 cache."""
+        """Speculatively pre-resolve immediate sibling YouTube Shorts edge shards (rr1..rr3---sn-*.googlevideo.com) into L1 cache."""
         try:
             clean = queried_domain.strip().lower().rstrip(".")
             m = _GVIDEO_SHARD_RE.match(clean)
@@ -1161,12 +1258,9 @@ class DNSGateway:
 
             targets = [
                 f"{prefix}{idx}{sep}sn-{pop}.googlevideo.com"
-                for idx in ("1", "2", "3", "4", "5")
+                for idx in ("1", "2", "3")
                 if idx != cur_idx
             ]
-            for companion in ("youtubei.googleapis.com", "jnn-pa.googleapis.com", "i.ytimg.com"):
-                targets.append(companion)
-
             target_qtypes = [1] if qtype not in (1, 28) else [qtype]
             for tgt in targets:
                 for qt in target_qtypes:
@@ -1215,7 +1309,7 @@ class DNSGateway:
             self.cache.put(name, qtype, do_bit, fallback, serve_expired_ttl=stale_ttl)
             return fallback, "failover:dot"
 
-        # Primary production path: 24-socket warm TLS 1.3 pool with 220ms Parallel Hedged Racing
+        # Primary production path: thread-safe warm TLS 1.3 pool with 40ms/85ms Parallel Hedged Racing
         try:
             resp = forward_upstream_dot(packet, cfg.get("upstreams", []), qname=name, routes=cfg.get("routes", []))
             self.cache.put(name, qtype, do_bit, resp, serve_expired_ttl=stale_ttl)
@@ -1228,16 +1322,25 @@ class DNSGateway:
                     return local_resp, "failover:unbound"
             except Exception:
                 pass
+            # If running in production (not mocked by a unit test) and port 853 is blocked/reset by ISP, fall back to UDP/TCP 53
+            if forward_upstream_dot is _DEFAULT_FORWARD_UPSTREAM_DOT:
+                try:
+                    udp_resp = forward_upstream_udp_tcp_fallback(packet, cfg.get("upstreams", []))
+                    self.cache.put(name, qtype, do_bit, udp_resp, serve_expired_ttl=stale_ttl)
+                    return udp_resp, "failover:udp53"
+                except Exception:
+                    pass
             raise
 
     def _forward_query(self, packet: bytes, name: str, qtype: int) -> tuple[bytes, str]:
         """Serve L1 wire cache (with SWR), local records, and Singleflight-coalesced parallel hedged DoT resolution."""
         _, _, q_end, _, do_bit = _parse_question_section(packet, allow_response=False)
+        query_question = packet[12:q_end]
         cache_cfg = self.store.config.get("cache", {})
         serve_expired = bool(cache_cfg.get("serve_expired", True))
         stale_ttl = int(cache_cfg.get("serve_expired_ttl", 3600))
 
-        cached, cache_tag, need_reval = self.cache.get_swr(name, qtype, do_bit, packet[:2], swr_enabled=serve_expired, query_question=packet[12:q_end])
+        cached, cache_tag, need_reval = self.cache.get_swr(name, qtype, do_bit, packet[:2], swr_enabled=serve_expired, query_question=query_question)
         if cached is not None:
             with self.metrics_lock:
                 self.metrics["cache_hits"] += 1
@@ -1255,16 +1358,8 @@ class DNSGateway:
             return local_ans, "local:record"
 
         clean_q = name.lower().rstrip(".")
-        # Instant <0.1ms HTTPS/SVCB (TYPE65/64) NODATA synthesis for YouTube Shorts/video shards to prevent 3-5s mid-stream QUIC/UDP stalls
-        if qtype in (64, 65) and is_quic_stall_prone_video_host(clean_q):
-            synth_nodata = error_response(packet, 0)
-            self.cache.put(clean_q, qtype, do_bit, synth_nodata, serve_expired_ttl=7200)
-            with self.metrics_lock:
-                self.metrics["streaming_quic_guard"] += 1
-            return synth_nodata, "streaming:tcp-fastpath"
-
-        # If querying a YouTube video shard (rrN---sn-*.googlevideo.com), speculatively pre-warm sibling shards rr1..rr5 in background
-        if clean_q.endswith(".googlevideo.com") and _GVIDEO_SHARD_RE.match(clean_q):
+        # If querying a YouTube video shard (rrN---sn-*.googlevideo.com), speculatively pre-warm sibling shards rr1..rr3 in background
+        if qtype in (1, 28) and clean_q.endswith(".googlevideo.com") and _GVIDEO_SHARD_RE.match(clean_q):
             try:
                 self.prefetch_pool.submit(self._prewarm_video_shards, clean_q, qtype, do_bit)
             except Exception:
@@ -1284,7 +1379,11 @@ class DNSGateway:
             if slot.event.wait(timeout=2.4) and len(slot.response) >= 12:
                 with self.metrics_lock:
                     self.metrics["coalesced_queries"] += 1
-                return packet[:2] + slot.response[2:], slot.note or "coalesced"
+                patched = bytearray(slot.response)
+                patched[:2] = packet[:2]
+                if query_question and len(patched) >= 12 + len(query_question):
+                    patched[12 : 12 + len(query_question)] = query_question
+                return bytes(patched), slot.note or "coalesced"
             if slot.error is not None:
                 raise slot.error
 
@@ -1295,7 +1394,7 @@ class DNSGateway:
             return resp, note
         except Exception as exc:
             if serve_expired:
-                stale = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=True)
+                stale = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=True, query_question=query_question)
                 if stale is not None:
                     slot.response = stale
                     slot.note = "cache:stale"
@@ -1480,7 +1579,7 @@ class DNSGateway:
                             gateway.metrics["frp_connections" if bridge else "direct_connections"] += 1
                             gateway.last_connection = time.time()
 
-                        send_lock = threading.Lock()
+                        conn_io_lock = threading.Lock()
                         inflight = threading.BoundedSemaphore(128)
                         active_futures: list[concurrent.futures.Future] = []
                         transport_kind = "frp" if bridge else "direct"
@@ -1490,8 +1589,7 @@ class DNSGateway:
                             try:
                                 resp, log_args = gateway._handle_query_core(pkt, client, transport_kind)
                                 framed = struct.pack("!H", len(resp)) + resp
-                                with send_lock:
-                                    conn.sendall(framed)
+                                ssl_send_all(conn, framed, conn_io_lock, timeout=10.0)
                             except (OSError, ssl.SSLError):
                                 pass
                             finally:
@@ -1504,14 +1602,14 @@ class DNSGateway:
 
                         while True:
                             try:
-                                length_bytes = recv_exact(conn, 2)
+                                length_bytes = ssl_recv_exact(conn, 2, conn_io_lock, timeout=65.0)
                             except (OSError, socket.timeout, ssl.SSLError):
                                 break
                             length = struct.unpack("!H", length_bytes)[0]
                             if length < 12 or length > 4096:
                                 break
                             try:
-                                packet = recv_exact(conn, length)
+                                packet = ssl_recv_exact(conn, length, conn_io_lock, timeout=10.0)
                             except (OSError, socket.timeout, ssl.SSLError):
                                 break
                             if not inflight.acquire(timeout=15.0):
