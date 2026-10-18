@@ -5,6 +5,7 @@ import collections
 import concurrent.futures
 import ipaddress
 import os
+import re
 import select
 import socket
 import socketserver
@@ -57,6 +58,62 @@ QTYPE_NAMES = {
     65: "HTTPS",
     255: "ANY",
 }
+
+_GVIDEO_SHARD_RE = re.compile(r"^(r(?:r)?)([1-8])(---|\.)sn-([a-z0-9-]+)\.googlevideo\.com$")
+
+STREAMING_MEDIA_SUFFIXES = (
+    ".googlevideo.com",
+    ".gvt1.com",
+    ".ytimg.com",
+    ".ggpht.com",
+    ".youtube.com",
+    ".youtube-nocookie.com",
+    ".c.youtube.com",
+    ".tiktokcdn.com",
+    ".tiktokv.com",
+    ".ttwstatic.com",
+    ".fbcdn.net",
+    ".cdninstagram.com",
+    ".nflxvideo.net",
+    ".ttvnw.net",
+    ".akamaized.net",
+    ".cloudfront.net",
+)
+
+STREAMING_MEDIA_EXACT = {
+    "googlevideo.com",
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "youtu.be",
+    "youtubei.googleapis.com",
+    "jnn-pa.googleapis.com",
+    "youtube.googleapis.com",
+    "s.youtube.com",
+    "i.ytimg.com",
+    "i9.ytimg.com",
+    "yt3.ggpht.com",
+}
+
+
+def is_streaming_domain(name: str) -> bool:
+    """Return True if hostname belongs to YouTube Shorts, video CDNs, or real-time media streaming infrastructure."""
+    clean = name.strip().lower().rstrip(".")
+    if not clean:
+        return False
+    if clean in STREAMING_MEDIA_EXACT:
+        return True
+    return clean.endswith(STREAMING_MEDIA_SUFFIXES)
+
+
+def is_quic_stall_prone_video_host(name: str) -> bool:
+    """Return True for YouTube Shorts/video CDN hosts where HTTPS/SVCB (TYPE65/64) triggers 3-5s mid-stream QUIC/UDP stalls."""
+    clean = name.strip().lower().rstrip(".")
+    if not clean:
+        return False
+    if clean in ("googlevideo.com", "youtubei.googleapis.com", "jnn-pa.googleapis.com", "youtube.googleapis.com", "s.youtube.com"):
+        return True
+    return clean.endswith((".googlevideo.com", ".gvt1.com", ".c.youtube.com", ".ytimg.com", ".ggpht.com"))
 
 
 def _build_edns0_opt(do_bit: bool = False) -> bytes:
@@ -358,14 +415,19 @@ class DNSCache:
         if rcode not in (0, 3):
             return
         decoded = decode_dns_answers(response)
+        clean_key_name = qname.lower().rstrip(".")
+        is_media = is_streaming_domain(clean_key_name)
         if decoded:
-            min_ttl = max(15, min(3600, min(int(r.get("ttl", 60)) for r in decoded)))
+            floor_ttl = 180 if (is_media and rcode == 0) else 15
+            min_ttl = max(floor_ttl, min(3600, min(int(r.get("ttl", 60)) for r in decoded)))
             summary = ", ".join(f"{r['type']} {r['data']}" for r in decoded[:3])
         else:
-            min_ttl = 60
+            min_ttl = 120 if (is_media and rcode == 0) else 60
             summary = "NXDOMAIN" if rcode == 3 else "NODATA"
+        if is_media:
+            serve_expired_ttl = max(serve_expired_ttl, 7200)
         now = time.time()
-        key = (qname.lower().rstrip("."), qtype, do_bit)
+        key = (clean_key_name, qtype, do_bit)
         cnames = [str(r["data"]).strip().rstrip(".") for r in decoded if r.get("rtype") == 5 and r.get("data")]
         entry = {
             "domain": key[0] or ".",
@@ -635,18 +697,35 @@ class _MuxTLSConn:
             w.error = exc
             w.event.set()
 
-    def is_healthy(self, max_idle: float = 55.0) -> bool:
+    def is_healthy(self, max_idle: float = 25.0) -> bool:
         if self.closed:
             return False
         if time.monotonic() - self.last_used > max_idle:
             self.close()
             return False
         try:
-            return self.conn.fileno() >= 0
+            if self.conn.fileno() < 0:
+                return False
+            # Non-blocking EOF check: if remote upstream closed the socket while idle, detect it in 0.001ms
+            msg_dontwait = getattr(socket, "MSG_DONTWAIT", 0)
+            if msg_dontwait and not self.pending:
+                try:
+                    peeked = self.conn. pending() if hasattr(self.conn, "pending") else 0
+                    if not peeked:
+                        raw_peek = socket.socket.recv(self.conn, 1, socket.MSG_PEEK | msg_dontwait)
+                        if raw_peek == b"":
+                            self.close()
+                            return False
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    self.close()
+                    return False
+            return True
         except Exception:
             return False
 
-    def query(self, out_pkt: bytes, timeout: float = 1.4) -> bytes:
+    def query(self, out_pkt: bytes, timeout: float = 1.1) -> bytes:
         if self.closed:
             raise OSError("Multiplexed DoT socket is closed")
         waiter = _MuxWaiter()
@@ -694,7 +773,7 @@ class _MuxTLSConn:
 class UpstreamTLSPool:
     """RFC 7858 Multiplexed TLS 1.3 connection pool with Connection Singleflight and EWMA latency routing."""
 
-    def __init__(self, max_idle: float = 55.0, max_per_upstream: int = 4):
+    def __init__(self, max_idle: float = 25.0, max_per_upstream: int = 4):
         self.max_idle = max_idle
         self.max_per_upstream = max_per_upstream
         self.lock = threading.Lock()
@@ -790,15 +869,17 @@ class UpstreamTLSPool:
         t0 = time.monotonic()
 
         mux = self._get_or_connect(key, force_new=False)
+        idle_age = time.monotonic() - mux.last_used
+        first_timeout = 0.55 if idle_age > 8.0 else 0.95
         try:
-            resp = mux.query(out_pkt, timeout=1.3)
+            resp = mux.query(out_pkt, timeout=first_timeout)
             self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
             return resp
         except Exception:
             mux.close()
             t0 = time.monotonic()
             fresh_mux = self._get_or_connect(key, force_new=True)
-            resp = fresh_mux.query(out_pkt, timeout=1.6)
+            resp = fresh_mux.query(out_pkt, timeout=1.2)
             self.record_latency(uid, (time.monotonic() - t0) * 1000.0)
             return resp
 
@@ -853,9 +934,10 @@ def forward_upstream_dot(packet: bytes, upstreams: list[dict[str, Any]], qname: 
     if len(selected) == 1:
         return _call_one(selected[0])
 
-    # Parallel Hedged Racing: start fastest upstream immediately; if it takes >220ms or errors, race backup upstream in parallel
+    # Parallel Hedged Racing: 40ms window for real-time video/streaming shards, 85ms for standard domains
+    hedge_delay = 0.040 if (qname and is_streaming_domain(qname)) else 0.085
     primary_fut = UPSTREAM_RACE_POOL.submit(_call_one, selected[0])
-    done, _ = concurrent.futures.wait([primary_fut], timeout=0.22)
+    done, _ = concurrent.futures.wait([primary_fut], timeout=hedge_delay)
     if primary_fut in done:
         try:
             return primary_fut.result()
@@ -987,6 +1069,7 @@ class DNSGateway:
         self.prefetch_pool = concurrent.futures.ThreadPoolExecutor(max_workers=32, thread_name_prefix="dns-swr")
         self._inflight_lock = threading.Lock()
         self._inflight: dict[tuple[str, int, bool], _InflightSlot] = {}
+        self._prewarmed_pops: dict[str, float] = {}
         self.rate_lock = threading.Lock()
         self.rate: dict[str, tuple[int, int]] = {}
         self._last_rate_cleanup = 0.0
@@ -1058,6 +1141,40 @@ class DNSGateway:
                 return synthesize_rr_response(packet, 16, bytes([len(raw_txt)]) + raw_txt, ttl=ttl)
 
         return error_response(packet, 0)
+
+    def _prewarm_video_shards(self, queried_domain: str, qtype: int, do_bit: bool) -> None:
+        """Speculatively pre-resolve sibling YouTube Shorts edge shards (rr1..rr5---sn-*.googlevideo.com) into L1 cache."""
+        try:
+            clean = queried_domain.strip().lower().rstrip(".")
+            m = _GVIDEO_SHARD_RE.match(clean)
+            if not m:
+                return
+            prefix, cur_idx, sep, pop = m.group(1), m.group(2), m.group(3), m.group(4)
+            now = time.monotonic()
+            with self._inflight_lock:
+                last_warm = self._prewarmed_pops.get(pop, 0.0)
+                if now - last_warm < 120.0:
+                    return
+                self._prewarmed_pops[pop] = now
+                if len(self._prewarmed_pops) > 256:
+                    self._prewarmed_pops.clear()
+
+            targets = [
+                f"{prefix}{idx}{sep}sn-{pop}.googlevideo.com"
+                for idx in ("1", "2", "3", "4", "5")
+                if idx != cur_idx
+            ]
+            for companion in ("youtubei.googleapis.com", "jnn-pa.googleapis.com", "i.ytimg.com"):
+                targets.append(companion)
+
+            target_qtypes = [1] if qtype not in (1, 28) else [qtype]
+            for tgt in targets:
+                for qt in target_qtypes:
+                    cached, _, _ = self.cache.get_swr(tgt, qt, do_bit, b"\x00\x00", swr_enabled=True)
+                    if cached is None:
+                        self._revalidate_background(tgt, qt, do_bit)
+        except Exception:
+            pass
 
     def _revalidate_background(self, domain: str, qtype: int, do_bit: bool) -> None:
         """Background Stale-While-Revalidate refresh so expired CDN TTLs never block foreground photo/web loads."""
@@ -1137,8 +1254,23 @@ class DNSGateway:
                 self.cache.put(name, qtype, do_bit, local_ans, serve_expired_ttl=3600)
             return local_ans, "local:record"
 
-        # Singleflight Coalescing: deduplicate concurrent identical (domain, qtype, do_bit) queries during web/photo bursts
         clean_q = name.lower().rstrip(".")
+        # Instant <0.1ms HTTPS/SVCB (TYPE65/64) NODATA synthesis for YouTube Shorts/video shards to prevent 3-5s mid-stream QUIC/UDP stalls
+        if qtype in (64, 65) and is_quic_stall_prone_video_host(clean_q):
+            synth_nodata = error_response(packet, 0)
+            self.cache.put(clean_q, qtype, do_bit, synth_nodata, serve_expired_ttl=7200)
+            with self.metrics_lock:
+                self.metrics["streaming_quic_guard"] += 1
+            return synth_nodata, "streaming:tcp-fastpath"
+
+        # If querying a YouTube video shard (rrN---sn-*.googlevideo.com), speculatively pre-warm sibling shards rr1..rr5 in background
+        if clean_q.endswith(".googlevideo.com") and _GVIDEO_SHARD_RE.match(clean_q):
+            try:
+                self.prefetch_pool.submit(self._prewarm_video_shards, clean_q, qtype, do_bit)
+            except Exception:
+                pass
+
+        # Singleflight Coalescing: deduplicate concurrent identical (domain, qtype, do_bit) queries during web/photo bursts
         sf_key = (clean_q, qtype, do_bit)
         leader = False
         with self._inflight_lock:

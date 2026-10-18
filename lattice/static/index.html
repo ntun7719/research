@@ -177,13 +177,13 @@
 
       <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-      <!-- ==================== 1. DASHBOARD PAGE ==================== -->
-      <section class="page active" id="page-dashboard">
-        <div id="setup-guide" class="setup-guide hidden">
+      <!-- ==================== 1. DASHBOARD PAGE (EXECUTIVE BENTO COMMAND CENTER) ==================== -->
+      <section class="page active" id="page-dashboard" data-bento-view="overview">
+        <div id="setup-guide" class="setup-guide collapsed hidden">
           <div class="setup-copy">
             <div class="setup-guide-top">
               <span class="setup-badge">Onboarding Checklist</span>
-              <button id="toggle-setup-guide-btn" type="button" class="text-button">Collapse</button>
+              <button id="toggle-setup-guide-btn" type="button" class="text-button">Expand</button>
             </div>
             <h2>Complete Android Private DNS Setup</h2>
             <p>Your local Unbound validating resolver is active. Complete these 3 steps to serve DNS over TLS on port 853.</p>
@@ -191,7 +191,21 @@
           <div id="setup-steps" class="setup-steps"></div>
         </div>
 
-        <div class="dashboard-toolbar">
+        <!-- EXECUTIVE COMMAND STRIP -->
+        <div class="dash-command-strip">
+          <div class="dash-command-left">
+            <div class="dash-health-pill">
+              <span id="dashboard-status-dot" class="status-dot warn"></span>
+              <div>
+                <strong id="dashboard-status">Checking</strong>
+                <small id="dashboard-status-help">Verifying Unbound and DoT gateway.</small>
+              </div>
+            </div>
+            <span class="badge allowed" id="streaming-turbo-badge" title="40ms Video Hedged Racing + Speculative googlevideo.com Shard Pre-Warming + QUIC Stall Guard">
+              <span class="pulse-indicator"></span>YouTube Shorts &amp; 4K Zero-Stall Active
+            </span>
+          </div>
+
           <div class="verdict-summary-pills" id="verdict-pills">
             <span class="verdict-chip"><i class="dot-sm good"></i>Allowed: <strong id="pill-allowed">0</strong></span>
             <span class="verdict-chip"><i class="dot-sm bad"></i>Blocked: <strong id="pill-blocked">0</strong></span>
@@ -199,31 +213,27 @@
             <span class="verdict-chip"><i class="dot-sm warn"></i>Errors: <strong id="pill-errors">0</strong></span>
             <span class="verdict-chip"><i class="dot-sm good"></i>L1 Wire Cache: <strong id="pill-l1-hit">0.0%</strong></span>
           </div>
-          <div class="time-range-picker">
-            <span class="time-range-label">Window</span>
-            <button type="button" class="time-btn" data-window="3600">1H</button>
-            <button type="button" class="time-btn" data-window="21600">6H</button>
-            <button type="button" class="time-btn active" data-window="86400">24H</button>
-            <button type="button" class="time-btn" data-window="604800">7D</button>
+
+          <div class="dash-command-right">
+            <div class="subnav dash-bento-nav" id="dashboard-subnav" role="tablist" aria-label="Dashboard view mode">
+              <button type="button" class="subnav-item page-subtab-btn active" data-page-sub="dashboard" data-subtab="overview">Bento All</button>
+              <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="shields">Shields &amp; Pulse</button>
+              <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="domains">Top Domains</button>
+              <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="topology">Upstreams &amp; Radar</button>
+            </div>
+            <div class="time-range-picker">
+              <span class="time-range-label">Window</span>
+              <button type="button" class="time-btn" data-window="3600">1H</button>
+              <button type="button" class="time-btn" data-window="21600">6H</button>
+              <button type="button" class="time-btn active" data-window="86400">24H</button>
+              <button type="button" class="time-btn" data-window="604800">7D</button>
+            </div>
           </div>
         </div>
 
-        <div class="stats-grid">
+        <!-- 4-CARD EXECUTIVE KPI MATRIX WITH INTEGRATED PERCENTILES & TRANSPORT SPLIT -->
+        <div class="stats-grid bento-kpi-grid" id="telemetry-ribbon">
           <article class="stat-card accent-card">
-            <div class="stat-header">
-              <span class="stat-label">Data Plane Health</span>
-              <span class="stat-icon-wrap status-icon">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-              </span>
-            </div>
-            <div class="stat-value status-value">
-              <span id="dashboard-status-dot" class="status-dot warn"></span>
-              <span id="dashboard-status">Checking</span>
-            </div>
-            <p id="dashboard-status-help">Verifying Unbound and DoT gateway.</p>
-          </article>
-
-          <article class="stat-card">
             <div class="stat-header">
               <span class="stat-label">Queries Handled</span>
               <span class="stat-icon-wrap primary-icon">
@@ -232,6 +242,10 @@
             </div>
             <div class="stat-value" id="queries-total">0</div>
             <p id="queries-window-caption">Total DNS lookups in selected window.</p>
+            <div class="kpi-footer-pills">
+              <span class="badge info" id="proto-dot-count">DoT :853 — 0</span>
+              <span class="badge allowed" id="proto-doh-count">DoH :443 — 0</span>
+            </div>
           </article>
 
           <article class="stat-card">
@@ -243,401 +257,302 @@
             </div>
             <div class="stat-value text-red" id="blocked-rate">0.0%</div>
             <p id="blocked-count">0 blocked requests.</p>
+            <div class="kpi-footer-pills">
+              <span class="badge blocked" id="sec-blocks-count">0 security/focus blocks</span>
+            </div>
           </article>
 
           <article class="stat-card">
             <div class="stat-header">
-              <span class="stat-label">Mean Resolution</span>
+              <span class="stat-label">Mean Resolution &amp; Tail</span>
               <span class="stat-icon-wrap green-icon">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               </span>
             </div>
             <div class="stat-value text-green" id="mean-latency">0.0 ms</div>
-            <p>Average round-trip lookup latency.</p>
+            <p>40ms Video Hedge • L1 Wire Cache</p>
+            <div class="kpi-footer-pills">
+              <span class="code-pill" id="p50-latency">P50: 0.0 ms</span>
+              <span class="code-pill" id="p95-latency">P95: 0.0 ms</span>
+              <span class="code-pill" id="p99-latency">P99: 0.0 ms</span>
+            </div>
           </article>
 
           <article class="stat-card">
             <div class="stat-header">
-              <span class="stat-label">Active Endpoints</span>
+              <span class="stat-label">Active Endpoints &amp; Pool</span>
               <span class="stat-icon-wrap purple-icon">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
               </span>
             </div>
             <div class="stat-value text-purple" id="clients-total">0</div>
-            <p>Distinct client IPs observed.</p>
-          </article>
-        </div>
-
-        <div class="telemetry-ribbon" id="telemetry-ribbon">
-          <div class="telemetry-ribbon-item">
-            <span class="ribbon-label">Latency Percentiles (P50 / P95 / P99)</span>
-            <div class="ribbon-values">
-              <span class="code-pill" id="p50-latency">P50: 0.0 ms</span>
-              <span class="code-pill" id="p95-latency">P95: 0.0 ms</span>
-              <span class="code-pill" id="p99-latency">P99: 0.0 ms</span>
-            </div>
-          </div>
-          <div class="telemetry-ribbon-item">
-            <span class="ribbon-label">Encrypted Transport Split</span>
-            <div class="ribbon-values">
-              <span class="badge info" id="proto-dot-count">DoT :853 — 0</span>
-              <span class="badge allowed" id="proto-doh-count">DoH :443 — 0</span>
-            </div>
-          </div>
-          <div class="telemetry-ribbon-item">
-            <span class="ribbon-label">TLS 1.3 Pool &amp; TTL Prefetcher</span>
-            <div class="ribbon-values">
+            <p>Distinct client IPs &amp; TLS 1.3 pool.</p>
+            <div class="kpi-footer-pills">
               <span class="code-pill" id="pool-hits-count">Pool Hits: 0</span>
               <span class="code-pill" id="prefetch-count">Prefetches: 0</span>
             </div>
+          </article>
+        </div>
+
+        <!-- BENTO ROW 1: TRAFFIC CHART + SECURITY SHIELDS + LIVE PULSE & TRANSPORT -->
+        <div id="dash-tab-overview" class="sub-pane active bento-row-primary" data-page-pane="dashboard" data-pane="overview">
+          <div class="bento-three-col" id="dashboard-executive-row">
+            <!-- BENTO COL 1: CHART + INLINE PIPELINE -->
+            <article class="card chart-card bento-chart-card">
+              <div class="card-header">
+                <div>
+                  <div class="title-with-pill">
+                    <h2>Traffic &amp; Streaming Telemetry</h2>
+                    <span id="chart-hover-readout" class="badge info hidden"></span>
+                  </div>
+                  <p>Real-time query volume, threat interception, and video shard resolution timeline.</p>
+                </div>
+                <div class="chart-controls-wrap">
+                  <div class="chart-mode-pills" id="chart-mode-pills">
+                    <button type="button" class="chart-mode-btn active" data-chart-mode="volume">Volume</button>
+                    <button type="button" class="chart-mode-btn" data-chart-mode="block_rate">Block %</button>
+                    <button type="button" class="chart-mode-btn" data-chart-mode="split">Split</button>
+                  </div>
+                  <div class="legend" id="chart-legend">
+                    <span><i class="legend-dot total"></i>Total</span>
+                    <span><i class="legend-dot blocked"></i>Blocked</span>
+                  </div>
+                </div>
+              </div>
+              <div class="chart-container">
+                <svg id="traffic-chart" viewBox="0 0 1000 250" preserveAspectRatio="none" aria-label="DNS traffic chart"></svg>
+              </div>
+              <div class="chart-summary-bar" id="chart-summary-bar">
+                <span>Peak: <strong id="chart-peak-label">—</strong></span>
+                <span>Avg / Bucket: <strong id="chart-avg-label">0 queries</strong></span>
+                <span>L1 Hits: <strong id="chart-cache-label">0</strong></span>
+              </div>
+              <div class="bento-inline-pipeline">
+                <div class="bento-pipe-step">
+                  <span class="node-pill">1. Endpoint</span>
+                  <strong id="topo-hostname-label">Android DoT / DoH</strong>
+                </div>
+                <span class="topo-connector">→</span>
+                <div class="bento-pipe-step">
+                  <span class="node-pill">2. Bridge</span>
+                  <strong id="topo-frp-state">Direct Listener</strong>
+                </div>
+                <span class="topo-connector">→</span>
+                <div class="bento-pipe-step">
+                  <span class="node-pill">3. Policy</span>
+                  <strong id="topo-policy-status">O(1) Bloom + CNAME</strong>
+                </div>
+                <span class="topo-connector">→</span>
+                <div class="bento-pipe-step">
+                  <span class="node-pill">4. Core</span>
+                  <strong id="topo-upstream-status">L1 + 40ms DoT Race</strong>
+                </div>
+              </div>
+            </article>
+
+            <!-- BENTO COL 2: 6 HARDWARE SECURITY SHIELDS & SCHEDULE -->
+            <article class="card bento-shields-card" id="dashboard-security-card">
+              <div class="card-header">
+                <div>
+                  <div class="title-with-pill">
+                    <h2>Security Shields</h2>
+                    <span id="security-score-badge" class="badge allowed">Grade A • 90/100</span>
+                    <span id="active-shields-badge" class="badge info">4/6 Shields</span>
+                  </div>
+                  <p>1-click DNS defense toggles &amp; focus curfew.</p>
+                </div>
+                <button type="button" class="text-button jump-page" data-target="dns">Options →</button>
+              </div>
+              <div class="shields-grid" id="dash-shields-grid">
+                <button type="button" class="shield-tile active" data-shield="dnssec">
+                  <div class="shield-tile-top">
+                    <strong>DNSSEC Validation</strong>
+                    <span class="shield-pill">ON</span>
+                  </div>
+                  <small>RFC 4035 root signatures</small>
+                </button>
+                <button type="button" class="shield-tile active" data-shield="rebinding_protection">
+                  <div class="shield-tile-top">
+                    <strong>Rebinding Guard</strong>
+                    <span class="shield-pill">ON</span>
+                  </div>
+                  <small>Block private/metadata IPs</small>
+                </button>
+                <button type="button" class="shield-tile active" data-shield="block_doh_canary">
+                  <div class="shield-tile-top">
+                    <strong>DoH Bypass Canary</strong>
+                    <span class="shield-pill">ON</span>
+                  </div>
+                  <small>Enforce Private DNS</small>
+                </button>
+                <button type="button" class="shield-tile" data-shield="safesearch">
+                  <div class="shield-tile-top">
+                    <strong>Strict SafeSearch</strong>
+                    <span class="shield-pill">OFF</span>
+                  </div>
+                  <small>Family-safe VIP search</small>
+                </button>
+                <button type="button" class="shield-tile" data-shield="block_risky_tlds">
+                  <div class="shield-tile-top">
+                    <strong>Risky TLD Shield</strong>
+                    <span class="shield-pill">OFF</span>
+                  </div>
+                  <small>Block .zip, .mov, .top, .tk</small>
+                </button>
+                <button type="button" class="shield-tile" data-shield="block_punycode">
+                  <div class="shield-tile-top">
+                    <strong>Punycode Guard</strong>
+                    <span class="shield-pill">OFF</span>
+                  </div>
+                  <small>Intercept xn-- homographs</small>
+                </button>
+              </div>
+              <div class="dash-schedule-bar" id="dash-schedule-bar">
+                <div>
+                  <strong>Scheduled Curfew / Focus</strong>
+                  <small id="dash-schedule-summary">Standby — No active time window</small>
+                </div>
+                <div class="button-row">
+                  <span id="dash-schedule-pill" class="badge info">Standby</span>
+                  <button type="button" class="btn-mini-action" id="dash-jump-schedule-btn">Configure</button>
+                </div>
+              </div>
+            </article>
+
+            <!-- BENTO COL 3: TRANSPORT READINESS + LIVE DNS PULSE -->
+            <article class="card bento-pulse-card" id="dashboard-live-pulse">
+              <div class="card-header">
+                <div>
+                  <div class="title-with-pill">
+                    <h2>Transport &amp; Live DNS Pulse</h2>
+                    <span id="dash-sse-badge" class="badge allowed"><span class="pulse-indicator"></span>Live SSE</span>
+                  </div>
+                  <p>Port 853/443 readiness &amp; live query stream.</p>
+                </div>
+                <button type="button" class="text-button jump-page" data-target="queries">Journal →</button>
+              </div>
+              <div class="bento-transport-mini">
+                <div class="bento-transport-chip">
+                  <span><i id="dot-listener" class="status-dot warn"></i>DoT :853</span>
+                  <strong id="dot-state">Checking</strong>
+                </div>
+                <div class="bento-transport-chip">
+                  <span><i id="dot-certificate" class="status-dot warn"></i>TLS Cert</span>
+                  <strong id="tls-state">Checking</strong>
+                </div>
+                <div class="bento-transport-chip">
+                  <span><i id="dot-frp" class="status-dot neutral"></i>FRP Edge</span>
+                  <strong id="frp-state">Disabled</strong>
+                </div>
+                <div class="bento-transport-chip">
+                  <span>Last Query</span>
+                  <strong id="last-query">Never</strong>
+                </div>
+              </div>
+              <div class="cert-countdown-box compact-cert-box">
+                <div class="cert-countdown-label">
+                  <span>Certificate Lifespan</span>
+                  <strong id="cert-days-left">Not installed</strong>
+                </div>
+                <svg class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none">
+                  <rect class="metric-bar-bg" width="100" height="6" rx="3"></rect>
+                  <rect id="cert-progress-rect" class="metric-bar-fill good" width="0" height="6" rx="3"></rect>
+                </svg>
+              </div>
+              <div id="dash-live-list" class="ranked-list bento-live-scroll">
+                <div class="empty-state">Waiting for live DNS traffic...</div>
+              </div>
+            </article>
           </div>
-          <div class="telemetry-ribbon-item">
-            <span class="ribbon-label">Active Threat &amp; Focus Blocks</span>
-            <div class="ribbon-values">
-              <span class="badge blocked" id="sec-blocks-count">0 security/focus blocks</span>
-            </div>
+        </div>
+
+        <!-- BENTO ROW 2: 4-COLUMN ANALYTICS & UPSTREAM DOCK -->
+        <div id="dash-tab-domains" class="sub-pane active bento-row-secondary" data-page-pane="dashboard" data-pane="domains">
+          <div class="bento-four-col">
+            <article class="card bento-dock-card">
+              <div class="card-header">
+                <div>
+                  <h2>Top Permitted Domains</h2>
+                  <p>Most resolved allowed hosts.</p>
+                </div>
+                <span class="badge allowed">Allowed</span>
+              </div>
+              <div id="top-allowed-list" class="ranked-list bento-dock-scroll">
+                <div class="empty-state">No allowed domain queries recorded yet.</div>
+              </div>
+            </article>
+
+            <article class="card bento-dock-card">
+              <div class="card-header">
+                <div>
+                  <h2>Top Blocked Threats</h2>
+                  <p>Intercepted ad &amp; tracker hosts.</p>
+                </div>
+                <span class="badge blocked">Blocked</span>
+              </div>
+              <div id="top-blocked-list" class="ranked-list bento-dock-scroll">
+                <div class="empty-state">No blocked domains recorded in this window.</div>
+              </div>
+            </article>
+
+            <article class="card bento-dock-card">
+              <div class="card-header">
+                <div>
+                  <h2>Top Client Endpoints</h2>
+                  <p>Active devices &amp; record types.</p>
+                </div>
+                <button type="button" class="text-button jump-page" data-target="blocking">Devices →</button>
+              </div>
+              <div id="top-clients-list" class="ranked-list bento-dock-scroll">
+                <div class="empty-state">No client endpoint telemetry recorded yet.</div>
+              </div>
+              <details class="log-details compact-qtype-details">
+                <summary>Query Record Type Breakdown (A, AAAA, HTTPS)</summary>
+                <div id="qtype-breakdown-list" class="ranked-list bento-dock-scroll">
+                  <div class="empty-state">No query type distribution recorded yet.</div>
+                </div>
+              </details>
+            </article>
+
+            <article class="card bento-dock-card" id="dash-tab-topology" data-page-pane="dashboard" data-pane="topology">
+              <div class="card-header">
+                <div>
+                  <h2>Upstreams &amp; Radar</h2>
+                  <p>DoT pool latency &amp; 60m anomalies.</p>
+                </div>
+                <div class="button-row">
+                  <button id="dash-reconnect-upstreams-btn" type="button" class="btn-mini-action" title="Reset pooled TLS sockets and flush stale cache">Reconnect</button>
+                  <button type="button" class="text-button jump-page" data-target="dns">DNS →</button>
+                </div>
+              </div>
+              <div id="upstream-health" class="list-stack bento-upstream-scroll"></div>
+              <div class="mini-stats compact-radar-grid">
+                <div class="mini-stat-box">
+                  <span class="mini-label">Indexed Domains</span>
+                  <strong id="policy-size" class="mini-val">0</strong>
+                </div>
+                <div class="mini-stat-box">
+                  <span class="mini-label">Unique (1h)</span>
+                  <strong id="unique-domains" class="mini-val">0</strong>
+                </div>
+                <div class="mini-stat-box">
+                  <span class="mini-label">NXDOMAIN %</span>
+                  <strong id="nx-ratio" class="mini-val">0.0%</strong>
+                </div>
+                <div class="mini-stat-box">
+                  <span class="mini-label">Queries (1h)</span>
+                  <strong id="hour-queries" class="mini-val">0</strong>
+                </div>
+              </div>
+              <div id="dga-card" class="dga-alert-box hidden">
+                <div class="dga-header">
+                  <strong>High-Entropy / DGA Detected</strong>
+                  <span class="badge warn">Entropy ≥ 3.5</span>
+                </div>
+                <div id="dga-body" class="list-stack"></div>
+              </div>
+            </article>
           </div>
-        </div>
-
-        <div class="subnav page-subnav" id="dashboard-subnav" role="tablist" aria-label="Dashboard sections">
-          <button type="button" class="subnav-item page-subtab-btn active" data-page-sub="dashboard" data-subtab="overview">Traffic &amp; Transport</button>
-          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="shields">Security Shields &amp; Live Pulse</button>
-          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="domains">Top Domains &amp; Clients</button>
-          <button type="button" class="subnav-item page-subtab-btn" data-page-sub="dashboard" data-subtab="topology">Resolution Path &amp; Upstreams</button>
-        </div>
-
-        <div id="dash-tab-overview" class="sub-pane active" data-page-pane="dashboard" data-pane="overview">
-        <div class="content-grid dashboard-grid">
-          <article class="card chart-card">
-            <div class="card-header">
-              <div>
-                <div class="title-with-pill">
-                  <h2>Query &amp; Threat Telemetry</h2>
-                  <span id="chart-hover-readout" class="badge info hidden"></span>
-                </div>
-                <p>Hover or touch across the timeline to inspect per-bucket query volume, block ratios, and traffic split.</p>
-              </div>
-              <div class="chart-controls-wrap">
-                <div class="chart-mode-pills" id="chart-mode-pills">
-                  <button type="button" class="chart-mode-btn active" data-chart-mode="volume">Volume</button>
-                  <button type="button" class="chart-mode-btn" data-chart-mode="block_rate">Block %</button>
-                  <button type="button" class="chart-mode-btn" data-chart-mode="split">Allow vs Block</button>
-                </div>
-                <div class="legend" id="chart-legend">
-                  <span><i class="legend-dot total"></i>Total Queries</span>
-                  <span><i class="legend-dot blocked"></i>Blocked Threats</span>
-                </div>
-              </div>
-            </div>
-            <div class="chart-container">
-              <svg id="traffic-chart" viewBox="0 0 1000 250" preserveAspectRatio="none" aria-label="DNS traffic chart"></svg>
-            </div>
-            <div class="chart-summary-bar" id="chart-summary-bar">
-              <span>Peak Interval: <strong id="chart-peak-label">—</strong></span>
-              <span>Avg / Bucket: <strong id="chart-avg-label">0 queries</strong></span>
-              <span>Window Cache Hits: <strong id="chart-cache-label">0</strong></span>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Transport &amp; TLS Readiness</h2>
-                <p>Core subsystems required for Android Private DNS.</p>
-              </div>
-              <button type="button" class="text-button jump-page" data-target="private">Manage →</button>
-            </div>
-            <div class="health-list">
-              <div class="health-row">
-                <span><i id="dot-listener" class="status-dot warn"></i>DoT Listener (8853)</span>
-                <strong id="dot-state">Checking</strong>
-              </div>
-              <div class="health-row">
-                <span><i id="dot-certificate" class="status-dot warn"></i>TLS Certificate</span>
-                <strong id="tls-state">Checking</strong>
-              </div>
-              <div class="health-row">
-                <span><i id="dot-frp" class="status-dot neutral"></i>FRP Edge Tunnel</span>
-                <strong id="frp-state">Disabled</strong>
-              </div>
-              <div class="health-row">
-                <span>Last DNS Query</span>
-                <strong id="last-query">Never</strong>
-              </div>
-            </div>
-            <div class="cert-countdown-box">
-              <div class="cert-countdown-label">
-                <span>Certificate Lifespan</span>
-                <strong id="cert-days-left">Not installed</strong>
-              </div>
-              <svg class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none">
-                <rect class="metric-bar-bg" width="100" height="6" rx="3"></rect>
-                <rect id="cert-progress-rect" class="metric-bar-fill good" width="0" height="6" rx="3"></rect>
-              </svg>
-            </div>
-          </article>
-        </div>
-        </div>
-
-        <div id="dash-tab-shields" class="sub-pane" data-page-pane="dashboard" data-pane="shields">
-        <div class="content-grid two" id="dashboard-executive-row">
-          <article class="card" id="dashboard-security-card">
-            <div class="card-header">
-              <div>
-                <div class="title-with-pill">
-                  <h2>Security Shields &amp; Focus Posture</h2>
-                  <span id="security-score-badge" class="badge allowed">Grade A • 90/100</span>
-                  <span id="active-shields-badge" class="badge info">4/6 Shields</span>
-                </div>
-                <p>One-click hardware-grade DNS defense toggles and scheduled focus/curfew state.</p>
-              </div>
-              <button type="button" class="text-button jump-page" data-target="dns">All Options →</button>
-            </div>
-            <div class="shields-grid" id="dash-shields-grid">
-              <button type="button" class="shield-tile active" data-shield="dnssec">
-                <div class="shield-tile-top">
-                  <strong>DNSSEC Validation</strong>
-                  <span class="shield-pill">ON</span>
-                </div>
-                <small>RFC 4035 cryptographic root signatures</small>
-              </button>
-              <button type="button" class="shield-tile active" data-shield="rebinding_protection">
-                <div class="shield-tile-top">
-                  <strong>DNS Rebinding Guard</strong>
-                  <span class="shield-pill">ON</span>
-                </div>
-                <small>Block RFC 1918 &amp; cloud metadata IPs</small>
-              </button>
-              <button type="button" class="shield-tile active" data-shield="block_doh_canary">
-                <div class="shield-tile-top">
-                  <strong>DoH Bypass Canary</strong>
-                  <span class="shield-pill">ON</span>
-                </div>
-                <small>Enforce Private DNS on browsers</small>
-              </button>
-              <button type="button" class="shield-tile" data-shield="safesearch">
-                <div class="shield-tile-top">
-                  <strong>Strict SafeSearch</strong>
-                  <span class="shield-pill">OFF</span>
-                </div>
-                <small>Family-safe VIP search &amp; YouTube</small>
-              </button>
-              <button type="button" class="shield-tile" data-shield="block_risky_tlds">
-                <div class="shield-tile-top">
-                  <strong>Risky TLD Shield</strong>
-                  <span class="shield-pill">OFF</span>
-                </div>
-                <small>Block .zip, .mov, .top, .tk phishing</small>
-              </button>
-              <button type="button" class="shield-tile" data-shield="block_punycode">
-                <div class="shield-tile-top">
-                  <strong>IDN Punycode Guard</strong>
-                  <span class="shield-pill">OFF</span>
-                </div>
-                <small>Intercept xn-- lookalike homographs</small>
-              </button>
-            </div>
-            <div class="dash-schedule-bar" id="dash-schedule-bar">
-              <div>
-                <strong>Scheduled Curfew / Deep Focus</strong>
-                <small id="dash-schedule-summary">Standby — No active time window</small>
-              </div>
-              <div class="button-row">
-                <span id="dash-schedule-pill" class="badge info">Standby</span>
-                <button type="button" class="btn-mini-action" id="dash-jump-schedule-btn">Configure</button>
-              </div>
-            </div>
-          </article>
-
-          <article class="card" id="dashboard-live-pulse">
-            <div class="card-header">
-              <div>
-                <div class="title-with-pill">
-                  <h2>Live DNS Pulse</h2>
-                  <span id="dash-sse-badge" class="badge allowed"><span class="pulse-indicator"></span>Real-Time SSE</span>
-                </div>
-                <p>Instant stream of the latest resolved, cached, and blocked queries across all endpoints.</p>
-              </div>
-              <button type="button" class="text-button jump-page" data-target="queries">Full Journal →</button>
-            </div>
-            <div id="dash-live-list" class="ranked-list">
-              <div class="empty-state">Waiting for live DNS traffic...</div>
-            </div>
-          </article>
-        </div>
-        </div>
-
-        <div id="dash-tab-domains" class="sub-pane" data-page-pane="dashboard" data-pane="domains">
-        <div class="content-grid two">
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Top Permitted Domains</h2>
-                <p>Most frequently resolved domains allowed by policy.</p>
-              </div>
-              <span class="badge allowed">Allowed</span>
-            </div>
-            <div id="top-allowed-list" class="ranked-list">
-              <div class="empty-state">No allowed domain queries recorded yet.</div>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Top Blocked Threats</h2>
-                <p>Most frequently intercepted ad, tracker, and malware domains.</p>
-              </div>
-              <span class="badge blocked">Blocked</span>
-            </div>
-            <div id="top-blocked-list" class="ranked-list">
-              <div class="empty-state">No blocked domains recorded in this window.</div>
-            </div>
-          </article>
-        </div>
-
-        <div class="content-grid two">
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Top Client Endpoints</h2>
-                <p>Most active client devices and IP addresses with policy block ratios.</p>
-              </div>
-              <button type="button" class="text-button jump-page" data-target="blocking">Devices →</button>
-            </div>
-            <div id="top-clients-list" class="ranked-list">
-              <div class="empty-state">No client endpoint telemetry recorded yet.</div>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Query Record Type Distribution</h2>
-                <p>Breakdown of DNS lookups by resource record type (A, AAAA, HTTPS, SVCB, PTR).</p>
-              </div>
-              <span class="badge info">RFC Wire Types</span>
-            </div>
-            <div id="qtype-breakdown-list" class="ranked-list">
-              <div class="empty-state">No query type distribution recorded yet.</div>
-            </div>
-          </article>
-        </div>
-        </div>
-
-        <div id="dash-tab-topology" class="sub-pane" data-page-pane="dashboard" data-pane="topology">
-        <article class="card topology-card">
-          <div class="card-header">
-            <div>
-              <div class="title-with-pill">
-                <h2>Resolution Data Path</h2>
-                <span class="badge info">End-to-End DoT + CNAME Guard</span>
-              </div>
-              <p>Live packet pipeline from client devices through policy evaluation, CNAME cloaking verification, and L1 wire cache to Unbound.</p>
-            </div>
-            <button type="button" class="text-button jump-page" data-target="private">Configure Transport →</button>
-          </div>
-          <div class="topology-grid">
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>Client Endpoints</strong>
-                <span id="topo-hostname-label">Android Private DNS / DoH</span>
-                <span class="node-pill">TLS 853 &amp; HTTPS 443</span>
-              </div>
-            </div>
-            <div class="topo-connector">→</div>
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>FRP Edge Bridge</strong>
-                <span id="topo-frp-state">Direct Listener</span>
-                <span class="node-pill">PROXY v1/v2 Auto-Peek</span>
-              </div>
-            </div>
-            <div class="topo-connector">→</div>
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>Policy &amp; CNAME Engine</strong>
-                <span id="topo-policy-status">0 rules • 3 categories</span>
-                <span class="node-pill">O(1) Bloom + Regex</span>
-              </div>
-            </div>
-            <div class="topo-connector">→</div>
-            <div class="topology-node">
-              <div class="topo-icon-wrap">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              </div>
-              <div class="topo-details">
-                <strong>L1 Cache + Unbound Core</strong>
-                <span id="topo-upstream-status">Validating Upstreams</span>
-                <span class="node-pill">RFC 7858 DoT + RFC 8767</span>
-              </div>
-            </div>
-          </div>
-        </article>
-
-        <div class="content-grid two">
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Upstream DoT Resolvers</h2>
-                <p>Live TLS health probes and round-trip latency to upstream servers.</p>
-              </div>
-              <div class="button-row">
-                <button id="dash-reconnect-upstreams-btn" type="button" class="btn-mini-action" title="Reset pooled TLS sockets and flush stale cache after VPN/network switch">Reconnect Pool</button>
-                <button type="button" class="text-button jump-page" data-target="dns">Configure →</button>
-              </div>
-            </div>
-            <div id="upstream-health" class="list-stack"></div>
-          </article>
-
-          <article class="card">
-            <div class="card-header">
-              <div>
-                <h2>Behavior Radar (Last 60m)</h2>
-                <p>Local anomaly indicators computed strictly on-device.</p>
-              </div>
-              <button type="button" class="text-button jump-page" data-target="blocking">Policy →</button>
-            </div>
-            <div class="mini-stats">
-              <div class="mini-stat-box">
-                <span class="mini-label">Indexed Blocklist Domains</span>
-                <strong id="policy-size" class="mini-val">0</strong>
-                <small>Active in Bloom filter</small>
-              </div>
-              <div class="mini-stat-box">
-                <span class="mini-label">Unique Domains (1h)</span>
-                <strong id="unique-domains" class="mini-val">0</strong>
-                <small>Distinct hostnames</small>
-              </div>
-              <div class="mini-stat-box">
-                <span class="mini-label">NXDOMAIN Ratio</span>
-                <strong id="nx-ratio" class="mini-val">0.0%</strong>
-                <small>Non-existent lookups</small>
-              </div>
-              <div class="mini-stat-box">
-                <span class="mini-label">Queries (Last Hour)</span>
-                <strong id="hour-queries" class="mini-val">0</strong>
-                <small>Rolling 60m volume</small>
-              </div>
-            </div>
-            <div id="dga-card" class="dga-alert-box hidden">
-              <div class="dga-header">
-                <strong>High-Entropy / Potential DGA Domains Detected</strong>
-                <span class="badge warn">Shannon Entropy ≥ 3.5</span>
-              </div>
-              <div id="dga-body" class="list-stack"></div>
-            </div>
-          </article>
-        </div>
         </div>
       </section>
 

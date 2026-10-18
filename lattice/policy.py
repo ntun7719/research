@@ -62,6 +62,37 @@ ANDROID_ESSENTIAL_EXACT = {
     "_dns.resolver.arpa",
 }
 
+YOUTUBE_STREAMING_ESSENTIAL_EXACT = {
+    "googlevideo.com",
+    "youtubei.googleapis.com",
+    "jnn-pa.googleapis.com",
+    "youtube.googleapis.com",
+    "yt3.ggpht.com",
+    "i.ytimg.com",
+    "i9.ytimg.com",
+    "s.youtube.com",
+    "video-stats.l.google.com",
+}
+
+YOUTUBE_STREAMING_ESSENTIAL_SUFFIXES = (
+    ".googlevideo.com",
+    ".gvt1.com",
+    ".ytimg.com",
+    ".ggpht.com",
+    ".c.youtube.com",
+)
+
+
+def is_youtube_streaming_essential(name: str) -> bool:
+    """Return True if hostname is a critical YouTube Shorts/video delivery or BotGuard playback continuation endpoint."""
+    clean = name.strip().lower().rstrip(".")
+    if not clean:
+        return False
+    if clean in YOUTUBE_STREAMING_ESSENTIAL_EXACT:
+        return True
+    return clean.endswith(YOUTUBE_STREAMING_ESSENTIAL_SUFFIXES)
+
+
 
 def is_android_essential(name: str, configured_hostname: str = "") -> bool:
     """Return True if domain is required for Android/iOS/OEM Private DNS validation or VPN captive portal checks."""
@@ -239,7 +270,7 @@ class Policy:
     def _feed_match(self, name: str, categories: list[str]) -> tuple[str, str] | None:
         if not name or not categories:
             return None
-        if is_android_essential(name, self.store.config.get("hostname", "")):
+        if is_android_essential(name, self.store.config.get("hostname", "")) or is_youtube_streaming_essential(name):
             return None
         cat_key = tuple(categories)
         cache_key = (name, cat_key)

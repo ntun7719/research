@@ -2143,6 +2143,24 @@ function switchPageSubTab(pageName, subTab, skipHistory) {
       const pane = $("#blocking-" + tabId);
       if (pane) pane.classList.toggle("active", tabId === resolved);
     });
+  } else if (pageName === "dashboard") {
+    $$('.page-subtab-btn[data-page-sub="dashboard"]').forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.subtab === resolved);
+    });
+    const dashEl = $("#page-dashboard");
+    if (dashEl) dashEl.dataset.bentoView = resolved;
+    const row1 = $("#dash-tab-overview");
+    const row2 = $("#dash-tab-domains");
+    if (resolved === "overview") {
+      row1?.classList.add("active");
+      row2?.classList.add("active");
+    } else if (resolved === "shields") {
+      row1?.classList.add("active");
+      row2?.classList.remove("active");
+    } else {
+      row1?.classList.remove("active");
+      row2?.classList.add("active");
+    }
   } else {
     $$('.page-subtab-btn[data-page-sub="' + pageName + '"]').forEach(btn => {
       btn.classList.toggle("active", btn.dataset.subtab === resolved);

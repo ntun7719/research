@@ -1498,6 +1498,72 @@ class FlagshipV5Tests(unittest.TestCase):
             self.assertIn(f'id="{sub_id}"', html)
         self.assertIn('html[data-density="compact"]', css)
 
+    def test_youtube_shorts_zero_stall_streaming_engine(self):
+        from unittest.mock import patch
+        from lattice.app import Lattice
+        from lattice.transport import _encode_name, rewrite_response
+
+        app = Lattice(self.tmp.name, resolver_port=15596, dot_port=18943, frp_local_port=18944)
+        try:
+            # 1. Verify false-positive feed immunity for YouTube Shorts BotGuard/chunk domains (while still honoring explicit rules)
+            with app.store.lock:
+                cur = app.store.db.execute(
+                    "INSERT INTO feeds(name, url, category, format, enabled, refreshed) VALUES (?, ?, ?, ?, 1, 100)",
+                    ("Overzealous Feed", "https://example.com/bad-yt.txt", "ads", "domains"),
+                )
+                fid = cur.lastrowid
+                app.store.db.executemany(
+                    "INSERT INTO feed_domains(feed_id, domain, category) VALUES (?, ?, ?)",
+                    [(fid, "jnn-pa.googleapis.com", "ads"), (fid, "s.youtube.com", "ads"), (fid, "googlevideo.com", "ads")],
+                )
+                app.store.db.commit()
+            app.policy.compile()
+
+            self.assertEqual(app.policy.decide("192.168.1.50", "jnn-pa.googleapis.com").action, "allow")
+            self.assertEqual(app.policy.decide("192.168.1.50", "rr1---sn-i3b7kn7d.googlevideo.com").action, "allow")
+
+            # 2. Verify instant <1ms HTTPS (TYPE65) & SVCB (TYPE64) NODATA synthesis to prevent 3-5s mid-Short QUIC stalls
+            q_https = (
+                struct.pack("!6H", 0x7101, 0x0100, 1, 0, 0, 0)
+                + _encode_name("rr1---sn-i3b7kn7d.googlevideo.com")
+                + struct.pack("!HH", 65, 1)
+            )
+            resp_https, log_https = app.gateway._handle_query_core(q_https, "192.168.1.50", "dot")
+            self.assertEqual(resp_https[3] & 15, 0)  # NOERROR
+            self.assertEqual(struct.unpack("!H", resp_https[6:8])[0], 0)  # 0 answers (NODATA)
+            self.assertIn("streaming:tcp-fastpath", log_https[7])
+
+            # 3. Verify 180s minimum TTL floor and speculative sibling shard pre-warming (rr1..rr5---sn-*.googlevideo.com)
+            queried_upstreams = []
+
+            def fake_dot(pkt, upstreams, qname="", routes=None):
+                queried_upstreams.append(qname)
+                # Return a short 20s TTL from upstream; DNSCache must enforce 180s floor for streaming media
+                return rewrite_response(pkt, 1, "142.250.190.206", ttl=20)
+
+            with patch("lattice.transport.forward_upstream_dot", side_effect=fake_dot):
+                q_rr1 = _question("rr1---sn-i3b7kn7d.googlevideo.com", ident=0x7102)
+                resp_rr1, _ = app.gateway._handle_query_core(q_rr1, "192.168.1.50", "dot")
+                self.assertEqual(resp_rr1[3] & 15, 0)
+
+                # Wait briefly for background prefetch_pool to pre-warm rr2..rr5 and jnn-pa.googleapis.com
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    cached_rr2, tag_rr2, _ = app.gateway.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x71\x03")
+                    if cached_rr2 is not None:
+                        break
+                    time.sleep(0.02)
+
+                cached_rr2, tag_rr2, _ = app.gateway.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x71\x03")
+                self.assertIsNotNone(cached_rr2)
+                self.assertEqual(tag_rr2, "cache:l1")
+                # Check 180s TTL floor was applied in L1 cache
+                entry = app.gateway.cache.entries.get(("rr1---sn-i3b7kn7d.googlevideo.com", 1, False)) or app.gateway.cache.entries.get(("rr1---sn-i3b7kn7d.googlevideo.com", 1, True))
+                self.assertIsNotNone(entry)
+                self.assertGreaterEqual(entry["ttl"], 180)
+        finally:
+            app.shutdown()
+
 
 
 if __name__ == "__main__":
