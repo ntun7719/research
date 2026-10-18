@@ -1553,7 +1553,13 @@ class FlagshipV5Tests(unittest.TestCase):
                 app.gateway.prefetch_pool.shutdown(wait=True)
 
                 cached_rr2, tag_rr2, _ = app.gateway.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x71\x03")
-                self.assertIsNotNone(cached_rr2)
+                self.assertIsNotNone(
+                    cached_rr2,
+                    f"prewarm diagnostics: upstream_calls={queried_upstreams!r}, "
+                    f"pop_keys={app.gateway._prewarmed_pops!r}, "
+                    f"cache_keys={list(app.gateway.cache.entries)!r}, "
+                    f"rr1_qname={q_rr1.hex()}",
+                )
                 self.assertEqual(tag_rr2, "cache:l1")
                 # Check 180s TTL floor was applied in L1 cache
                 entry = app.gateway.cache.entries.get(("rr1---sn-i3b7kn7d.googlevideo.com", 1, False)) or app.gateway.cache.entries.get(("rr1---sn-i3b7kn7d.googlevideo.com", 1, True))
