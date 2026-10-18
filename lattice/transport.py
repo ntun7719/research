@@ -1152,8 +1152,8 @@ class DNSGateway:
             prefix, cur_idx, sep, pop = m.group(1), m.group(2), m.group(3), m.group(4)
             now = time.monotonic()
             with self._inflight_lock:
-                last_warm = self._prewarmed_pops.get(pop, 0.0)
-                if now - last_warm < 120.0:
+                last_warm = self._prewarmed_pops.get(pop)
+                if last_warm is not None and now - last_warm < 120.0:
                     return
                 self._prewarmed_pops[pop] = now
                 if len(self._prewarmed_pops) > 256:

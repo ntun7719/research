@@ -1498,6 +1498,24 @@ class FlagshipV5Tests(unittest.TestCase):
             self.assertIn(f'id="{sub_id}"', html)
         self.assertIn('html[data-density="compact"]', css)
 
+    def test_video_shard_prewarm_on_fresh_host_uptime(self):
+        from unittest.mock import patch
+        from lattice.transport import DNSGateway, rewrite_response
+
+        gw = DNSGateway(self.store, self.policy, CertificateVault(self.store), 15598, 18947, 18948)
+
+        def fake_dot(pkt, upstreams, qname="", routes=None):
+            return rewrite_response(pkt, 1, "142.250.190.206", ttl=20)
+
+        # The very first speculative lookup must not be throttled merely
+        # because the machine was booted fewer than 120 seconds ago.
+        with patch("lattice.transport.time.monotonic", return_value=30.0):
+            with patch("lattice.transport.forward_upstream_dot", side_effect=fake_dot):
+                gw._prewarm_video_shards("rr1---sn-i3b7kn7d.googlevideo.com", 1, False)
+
+        cached, _, _ = gw.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x00\x01")
+        self.assertIsNotNone(cached, "Fresh machine uptime must not suppress the first prewarm")
+
     def test_youtube_shorts_zero_stall_streaming_engine(self):
         from unittest.mock import patch
         from lattice.app import Lattice
@@ -1541,19 +1559,6 @@ class FlagshipV5Tests(unittest.TestCase):
                 # Return a short 20s TTL from upstream; DNSCache must enforce 180s floor for streaming media
                 return rewrite_response(pkt, 1, "142.250.190.206", ttl=20)
 
-            submitted = []
-            submit_errors = []
-            real_submit = app.gateway.prefetch_pool.submit
-
-            def observed_submit(func, *args, **kwargs):
-                submitted.append(getattr(func, "__name__", repr(func)))
-                try:
-                    return real_submit(func, *args, **kwargs)
-                except Exception as exc:
-                    submit_errors.append(repr(exc))
-                    raise
-
-            app.gateway.prefetch_pool.submit = observed_submit
             with patch("lattice.transport.forward_upstream_dot", side_effect=fake_dot):
                 q_rr1 = _question("rr1---sn-i3b7kn7d.googlevideo.com", ident=0x7102)
                 resp_rr1, _ = app.gateway._handle_query_core(q_rr1, "192.168.1.50", "dot")
@@ -1568,12 +1573,8 @@ class FlagshipV5Tests(unittest.TestCase):
                 cached_rr2, tag_rr2, _ = app.gateway.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x71\x03")
                 self.assertIsNotNone(
                     cached_rr2,
-                    f"prewarm diagnostics: upstream_calls={queried_upstreams!r}, "
-                    f"pop_keys={app.gateway._prewarmed_pops!r}, "
-                    f"cache_keys={list(app.gateway.cache.entries)!r}, "
-                    f"submitted={submitted!r}, submit_errors={submit_errors!r}, "
-                    f"thread_count={len(app.gateway.prefetch_pool._threads)}, "
-                    f"rr1_qname={q_rr1.hex()}",
+                    f"Sibling shard was not prewarmed; upstream_calls={queried_upstreams!r}, "
+                    f"warmed_pops={app.gateway._prewarmed_pops!r}",
                 )
                 self.assertEqual(tag_rr2, "cache:l1")
                 # Check 180s TTL floor was applied in L1 cache
