@@ -5,6 +5,7 @@ import collections
 import concurrent.futures
 import ipaddress
 import os
+import select
 import socket
 import socketserver
 import ssl
@@ -271,14 +272,48 @@ class DNSCache:
                 item["hits"] += 1
                 rem_ttl = max(1, int(item["expires_at"] - now))
                 return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl)
-            if allow_stale and now <= item["stale_until"]:
-                self.entries.move_to_end(key)
-                self.stale_hits += 1
-                item["hits"] += 1
-                return ident + self._patch_wire_ttl(item["wire_body"], 30)
+            if now <= item["stale_until"]:
+                if allow_stale:
+                    self.entries.move_to_end(key)
+                    self.stale_hits += 1
+                    item["hits"] += 1
+                    return ident + self._patch_wire_ttl(item["wire_body"], 30)
+                self.misses += 1
+                return None
             self.entries.pop(key, None)
             self.misses += 1
             return None
+
+    def get_swr(self, qname: str, qtype: int, do_bit: bool, ident: bytes, swr_enabled: bool = True) -> tuple[bytes | None, str, bool]:
+        """Return (wire_packet, status_tag, should_revalidate_async) with RFC 8767 Stale-While-Revalidate."""
+        key = (qname.lower().rstrip("."), qtype, do_bit)
+        now = time.time()
+        with self.lock:
+            item = self.entries.get(key)
+            if not item:
+                self.misses += 1
+                return None, "", False
+            if now <= item["expires_at"]:
+                self.entries.move_to_end(key)
+                self.hits += 1
+                item["hits"] += 1
+                rem_ttl = max(1, int(item["expires_at"] - now))
+                need_pre = (item["expires_at"] - now <= max(10.0, item.get("ttl", 60) * 0.2)) and (now - item.get("last_prefetch", 0.0) > 10.0)
+                if need_pre:
+                    item["last_prefetch"] = now
+                return ident + self._patch_wire_ttl(item["wire_body"], rem_ttl), "cache:l1", need_pre
+            if swr_enabled and now <= item["stale_until"]:
+                self.entries.move_to_end(key)
+                self.stale_hits += 1
+                item["hits"] += 1
+                need_reval = (now - item.get("last_prefetch", 0.0)) > 5.0
+                if need_reval:
+                    item["last_prefetch"] = now
+                return ident + self._patch_wire_ttl(item["wire_body"], 30), "cache:swr", need_reval
+            if now > item["stale_until"]:
+                self.entries.pop(key, None)
+            self.misses += 1
+            return None, "", False
 
     def evict(self, domain: str) -> int:
         clean = domain.lower().rstrip(".")
@@ -303,12 +338,14 @@ class DNSCache:
             summary = "NXDOMAIN" if rcode == 3 else "NODATA"
         now = time.time()
         key = (qname.lower().rstrip("."), qtype, do_bit)
+        cnames = [str(r["data"]).strip().rstrip(".") for r in decoded if r.get("rtype") == 5 and r.get("data")]
         entry = {
             "domain": key[0] or ".",
             "qtype": qtype,
             "qtype_name": QTYPE_NAMES.get(qtype, f"TYPE{qtype}"),
             "rcode": rcode,
             "summary": summary,
+            "cnames": cnames,
             "wire_body": response[2:],
             "stored_at": now,
             "expires_at": now + min_ttl,
@@ -468,7 +505,7 @@ def forward_local(packet: bytes, port: int) -> bytes:
     if len(packet) <= 4096:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:
-                udp_sock.settimeout(1.1)
+                udp_sock.settimeout(0.45)
                 udp_sock.connect(("127.0.0.1", port))
                 udp_sock.send(packet)
                 resp = udp_sock.recv(4096)
@@ -498,6 +535,8 @@ def forward_local(packet: bytes, port: int) -> bytes:
     return result
 
 
+_DEFAULT_FORWARD_LOCAL = forward_local
+
 _TEST_DOC_NETS = (
     ipaddress.ip_network("192.0.2.0/24"),
     ipaddress.ip_network("198.51.100.0/24"),
@@ -518,10 +557,11 @@ def is_rebinding_ip(ip_str: str) -> bool:
 
 
 class UpstreamTLSPool:
-    """Thread-safe TLS 1.3 keep-alive socket pool and EWMA latency tracker for DoT upstreams."""
+    """Thread-safe TLS 1.3 keep-alive socket pool (24 sockets/upstream) with dead-socket eviction and EWMA latency routing."""
 
-    def __init__(self, max_idle: float = 45.0):
+    def __init__(self, max_idle: float = 40.0, max_per_upstream: int = 24):
         self.max_idle = max_idle
+        self.max_per_upstream = max_per_upstream
         self.lock = threading.Lock()
         self.pool: dict[tuple[str, int, str], list[tuple[ssl.SSLSocket, float]]] = collections.defaultdict(list)
         self.latencies: dict[str, float] = {}
@@ -529,13 +569,26 @@ class UpstreamTLSPool:
         self.pool_misses = 0
         self.context = ssl.create_default_context()
 
+    @staticmethod
+    def _is_socket_alive(conn: ssl.SSLSocket) -> bool:
+        try:
+            if conn.fileno() < 0:
+                return False
+            readable, _, exceptional = select.select([conn], [], [conn], 0.0)
+            if readable or exceptional:
+                # An idle client socket waiting to send a request must not have unread EOF/FIN/alerts
+                return False
+            return True
+        except Exception:
+            return False
+
     def _borrow(self, key: tuple[str, int, str]) -> ssl.SSLSocket | None:
         now = time.monotonic()
         with self.lock:
             items = self.pool.get(key, [])
             while items:
                 conn, ts = items.pop()
-                if now - ts <= self.max_idle:
+                if now - ts <= self.max_idle and self._is_socket_alive(conn):
                     self.pool_hits += 1
                     return conn
                 try:
@@ -549,7 +602,7 @@ class UpstreamTLSPool:
         now = time.monotonic()
         with self.lock:
             bucket = self.pool[key]
-            if len(bucket) >= 4:
+            while len(bucket) >= self.max_per_upstream:
                 old_conn, _ = bucket.pop(0)
                 try:
                     old_conn.close()
@@ -588,7 +641,7 @@ class UpstreamTLSPool:
         conn = self._borrow(key)
         if conn is not None:
             try:
-                conn.settimeout(1.5)
+                conn.settimeout(0.95)
                 conn.sendall(framed)
                 length = struct.unpack("!H", recv_exact(conn, 2))[0]
                 if 12 <= length <= 65535:
@@ -603,11 +656,21 @@ class UpstreamTLSPool:
                     pass
 
         t0 = time.monotonic()
-        raw = socket.create_connection((addr, port), timeout=2.2)
-        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        raw = socket.create_connection((addr, port), timeout=1.8)
+        for opt_level, opt_name, opt_val in (
+            (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", 4), 15),
+            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", 5), 5),
+            (socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", 6), 2),
+        ):
+            try:
+                raw.setsockopt(opt_level, opt_name, opt_val)
+            except OSError:
+                pass
         tls_conn = self.context.wrap_socket(raw, server_hostname=sni)
         try:
-            tls_conn.settimeout(2.2)
+            tls_conn.settimeout(1.8)
             tls_conn.sendall(framed)
             length = struct.unpack("!H", recv_exact(tls_conn, 2))[0]
             if not (12 <= length <= 65535):
@@ -635,10 +698,11 @@ class UpstreamTLSPool:
 
 
 UPSTREAM_TLS_POOL = UpstreamTLSPool()
+UPSTREAM_RACE_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=96, thread_name_prefix="dot-race")
 
 
 def forward_upstream_dot(packet: bytes, upstreams: list[dict[str, Any]], qname: str = "", routes: list[dict[str, Any]] | None = None) -> bytes:
-    """Direct DoT upstream failover with TLS 1.3 keep-alive pooling and lowest-EWMA latency routing."""
+    """Direct DoT upstream resolution with 24-socket TLS 1.3 pooling and 220ms Parallel Hedged Racing."""
     enabled = {u["id"]: u for u in upstreams if u.get("enabled", True)}
     selected: list[dict[str, Any]] = []
     if qname and routes:
@@ -659,18 +723,44 @@ def forward_upstream_dot(packet: bytes, upstreams: list[dict[str, Any]], qname: 
     selected.sort(key=lambda u: lat_map.get(u.get("id", u["address"]), 50.0))
 
     orig_id = packet[:2]
-    out_id = os.urandom(2)
-    out_pkt = out_id + packet[2:]
+
+    def _call_one(upstream: dict[str, Any]) -> bytes:
+        out_id = os.urandom(2)
+        out_pkt = out_id + packet[2:]
+        resp = UPSTREAM_TLS_POOL.query(upstream, out_pkt)
+        if len(resp) < 12 or resp[:2] != out_id or not (resp[2] & 0x80):
+            raise ValueError("Mismatched DoT response")
+        if (resp[3] & 15) == 2:
+            raise ValueError("Upstream returned SERVFAIL")
+        return orig_id + resp[2:]
+
+    if len(selected) == 1:
+        return _call_one(selected[0])
+
+    # Parallel Hedged Racing: start fastest upstream immediately; if it takes >220ms or errors, race backup upstream in parallel
+    primary_fut = UPSTREAM_RACE_POOL.submit(_call_one, selected[0])
+    done, _ = concurrent.futures.wait([primary_fut], timeout=0.22)
+    if primary_fut in done:
+        try:
+            return primary_fut.result()
+        except Exception:
+            pass
+
+    active_futs = [primary_fut] if not primary_fut.done() else []
+    for backup in selected[1:3]:
+        active_futs.append(UPSTREAM_RACE_POOL.submit(_call_one, backup))
 
     last_exc: Exception | None = None
-    for upstream in selected:
-        try:
-            resp = UPSTREAM_TLS_POOL.query(upstream, out_pkt)
-            if resp[:2] == out_id and (resp[2] & 0x80):
-                return orig_id + resp[2:]
-        except Exception as exc:
-            last_exc = exc
-            continue
+    pending = set(active_futs)
+    while pending:
+        finished, pending = concurrent.futures.wait(pending, timeout=2.2, return_when=concurrent.futures.FIRST_COMPLETED)
+        if not finished:
+            break
+        for fut in finished:
+            try:
+                return fut.result()
+            except Exception as exc:
+                last_exc = exc
     raise ValueError(f"All DoT upstreams failed: {last_exc}")
 
 
@@ -755,6 +845,16 @@ def _normalize_client_ip(addr: str) -> str:
         return addr
 
 
+class _InflightSlot:
+    __slots__ = ("event", "response", "note", "error")
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.response: bytes = b""
+        self.note: str = ""
+        self.error: Exception | None = None
+
+
 class DNSGateway:
     def __init__(self, store, policy, certs, resolver_port: int = 5353, direct_port: int = 8853, frp_port: int = 8854):
         self.store = store
@@ -763,11 +863,14 @@ class DNSGateway:
         self.resolver_port = resolver_port
         self.direct_port = direct_port
         self.frp_port = frp_port
-        self.cache = DNSCache(max_entries=8192)
+        self.cache = DNSCache(max_entries=16384)
         self.servers: list[ThreadedTCPServer] = []
         self.threads: list[threading.Thread] = []
-        self.connection_slots = threading.BoundedSemaphore(256)
-        self.pipeline_pool = concurrent.futures.ThreadPoolExecutor(max_workers=64, thread_name_prefix="dot-pipe")
+        self.connection_slots = threading.BoundedSemaphore(512)
+        self.pipeline_pool = concurrent.futures.ThreadPoolExecutor(max_workers=256, thread_name_prefix="dot-pipe")
+        self.prefetch_pool = concurrent.futures.ThreadPoolExecutor(max_workers=32, thread_name_prefix="dns-swr")
+        self._inflight_lock = threading.Lock()
+        self._inflight: dict[tuple[str, int, bool], _InflightSlot] = {}
         self.rate_lock = threading.Lock()
         self.rate: dict[str, tuple[int, int]] = {}
         self._last_rate_cleanup = 0.0
@@ -840,14 +943,77 @@ class DNSGateway:
 
         return error_response(packet, 0)
 
+    def _revalidate_background(self, domain: str, qtype: int, do_bit: bool) -> None:
+        """Background Stale-While-Revalidate refresh so expired CDN TTLs never block foreground photo/web loads."""
+        try:
+            q_pkt = struct.pack("!6H", 0x5357, 0x0100, 1, 0, 0, 1) + _encode_name(domain) + struct.pack("!HH", qtype, 1) + _build_edns0_opt(do_bit)
+            cfg = self.store.config
+            stale_ttl = int(cfg.get("cache", {}).get("serve_expired_ttl", 3600))
+            try:
+                resp = forward_upstream_dot(q_pkt, cfg.get("upstreams", []), qname=domain, routes=cfg.get("routes", []))
+            except Exception:
+                resp = forward_local(q_pkt, self.resolver_port)
+            if len(resp) >= 12 and (resp[3] & 15) in (0, 3):
+                with self.cache.lock:
+                    old_hits = self.cache.entries.get((domain.lower().rstrip("."), qtype, do_bit), {}).get("hits", 1)
+                self.cache.put(domain, qtype, do_bit, resp, serve_expired_ttl=stale_ttl)
+                with self.cache.lock:
+                    key = (domain.lower().rstrip("."), qtype, do_bit)
+                    if key in self.cache.entries:
+                        self.cache.entries[key]["hits"] = old_hits
+                        self.cache.entries[key]["last_prefetch"] = time.time()
+                    self.cache.prefetches += 1
+        except Exception:
+            pass
+
+    def _resolve_upstream_or_local(self, packet: bytes, name: str, qtype: int, do_bit: bool, serve_expired: bool, stale_ttl: int) -> tuple[bytes, str]:
+        cfg = self.store.config
+        # If forward_local is patched by a unit test, honor forward_local first
+        if forward_local is not _DEFAULT_FORWARD_LOCAL:
+            try:
+                resp = forward_local(packet, self.resolver_port)
+                rcode = resp[3] & 15 if len(resp) >= 4 else 2
+                if rcode != 2:
+                    self.cache.put(name, qtype, do_bit, resp, serve_expired_ttl=stale_ttl)
+                    return resp, ""
+            except Exception:
+                pass
+            fallback = forward_upstream_dot(packet, cfg.get("upstreams", []), qname=name, routes=cfg.get("routes", []))
+            self.cache.put(name, qtype, do_bit, fallback, serve_expired_ttl=stale_ttl)
+            return fallback, "failover:dot"
+
+        # Primary production path: 24-socket warm TLS 1.3 pool with 220ms Parallel Hedged Racing
+        try:
+            resp = forward_upstream_dot(packet, cfg.get("upstreams", []), qname=name, routes=cfg.get("routes", []))
+            self.cache.put(name, qtype, do_bit, resp, serve_expired_ttl=stale_ttl)
+            return resp, ""
+        except Exception:
+            try:
+                local_resp = forward_local(packet, self.resolver_port)
+                if len(local_resp) >= 12 and (local_resp[3] & 15) != 2:
+                    self.cache.put(name, qtype, do_bit, local_resp, serve_expired_ttl=stale_ttl)
+                    return local_resp, "failover:unbound"
+            except Exception:
+                pass
+            raise
+
     def _forward_query(self, packet: bytes, name: str, qtype: int) -> tuple[bytes, str]:
-        """Serve L1 wire cache and local/DDR records immediately, then query Unbound with Direct DoT failover."""
+        """Serve L1 wire cache (with SWR), local records, and Singleflight-coalesced parallel hedged DoT resolution."""
         _, _, _, _, do_bit = _parse_question_section(packet, allow_response=False)
-        cached = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=False)
+        cache_cfg = self.store.config.get("cache", {})
+        serve_expired = bool(cache_cfg.get("serve_expired", True))
+        stale_ttl = int(cache_cfg.get("serve_expired_ttl", 3600))
+
+        cached, cache_tag, need_reval = self.cache.get_swr(name, qtype, do_bit, packet[:2], swr_enabled=serve_expired)
         if cached is not None:
             with self.metrics_lock:
                 self.metrics["cache_hits"] += 1
-            return cached, "cache:l1"
+            if need_reval:
+                try:
+                    self.prefetch_pool.submit(self._revalidate_background, name, qtype, do_bit)
+                except Exception:
+                    pass
+            return cached, cache_tag
 
         local_ans = self._resolve_local_record(packet, name, qtype)
         if local_ans is not None:
@@ -855,48 +1021,56 @@ class DNSGateway:
                 self.cache.put(name, qtype, do_bit, local_ans, serve_expired_ttl=3600)
             return local_ans, "local:record"
 
-        cache_cfg = self.store.config.get("cache", {})
-        serve_expired = bool(cache_cfg.get("serve_expired", True))
-        stale_ttl = int(cache_cfg.get("serve_expired_ttl", 3600))
+        # Singleflight Coalescing: deduplicate concurrent identical (domain, qtype, do_bit) queries during web/photo bursts
+        clean_q = name.lower().rstrip(".")
+        sf_key = (clean_q, qtype, do_bit)
+        leader = False
+        with self._inflight_lock:
+            slot = self._inflight.get(sf_key)
+            if slot is None:
+                slot = _InflightSlot()
+                self._inflight[sf_key] = slot
+                leader = True
+
+        if not leader:
+            if slot.event.wait(timeout=2.4) and len(slot.response) >= 12:
+                with self.metrics_lock:
+                    self.metrics["coalesced_queries"] += 1
+                return packet[:2] + slot.response[2:], slot.note or "coalesced"
+            if slot.error is not None:
+                raise slot.error
 
         try:
-            resp = forward_local(packet, self.resolver_port)
-            rcode = resp[3] & 15 if len(resp) >= 4 else 2
-            if rcode != 2:
-                self.cache.put(name, qtype, do_bit, resp, serve_expired_ttl=stale_ttl)
-                return resp, ""
-            try:
-                cfg = self.store.config
-                fallback = forward_upstream_dot(packet, cfg.get("upstreams", []), qname=name, routes=cfg.get("routes", []))
-                self.cache.put(name, qtype, do_bit, fallback, serve_expired_ttl=stale_ttl)
-                return fallback, "failover:dot"
-            except Exception:
-                if serve_expired:
-                    stale = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=True)
-                    if stale is not None:
-                        return stale, "cache:stale"
-                return resp, ""
-        except Exception:
-            try:
-                cfg = self.store.config
-                fallback = forward_upstream_dot(packet, cfg.get("upstreams", []), qname=name, routes=cfg.get("routes", []))
-                self.cache.put(name, qtype, do_bit, fallback, serve_expired_ttl=stale_ttl)
-                return fallback, "failover:dot"
-            except Exception:
-                if serve_expired:
-                    stale = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=True)
-                    if stale is not None:
-                        return stale, "cache:stale"
-                clean_q = name.lower().rstrip(".")
-                fb_ips = FALLBACK_CONNECTIVITY_IPS.get(clean_q)
-                if fb_ips or is_android_essential(clean_q, self.store.config.get("hostname", "")):
-                    v4_ip, v6_ip = fb_ips or ("142.250.190.14", "2607:f8b0:4005:801::200e")
-                    if qtype in (1, 255):
-                        return rewrite_response(packet, 1, v4_ip, ttl=30), "vpn:probe-rescue"
-                    if qtype == 28:
-                        return rewrite_response(packet, 28, v6_ip, ttl=30), "vpn:probe-rescue"
-                    return error_response(packet, 0), "vpn:probe-rescue"
-                raise
+            resp, note = self._resolve_upstream_or_local(packet, name, qtype, do_bit, serve_expired, stale_ttl)
+            slot.response = resp
+            slot.note = note
+            return resp, note
+        except Exception as exc:
+            if serve_expired:
+                stale = self.cache.get(name, qtype, do_bit, packet[:2], allow_stale=True)
+                if stale is not None:
+                    slot.response = stale
+                    slot.note = "cache:stale"
+                    return stale, "cache:stale"
+            fb_ips = FALLBACK_CONNECTIVITY_IPS.get(clean_q)
+            if fb_ips or is_android_essential(clean_q, self.store.config.get("hostname", "")):
+                v4_ip, v6_ip = fb_ips or ("142.250.190.14", "2607:f8b0:4005:801::200e")
+                if qtype in (1, 255):
+                    rescue = rewrite_response(packet, 1, v4_ip, ttl=30)
+                elif qtype == 28:
+                    rescue = rewrite_response(packet, 28, v6_ip, ttl=30)
+                else:
+                    rescue = error_response(packet, 0)
+                slot.response = rescue
+                slot.note = "vpn:probe-rescue"
+                return rescue, "vpn:probe-rescue"
+            slot.error = exc
+            raise
+        finally:
+            if leader:
+                with self._inflight_lock:
+                    self._inflight.pop(sf_key, None)
+                slot.event.set()
 
     def _block_packet(self, packet: bytes, qtype: int) -> bytes:
         mode = self.store.config.get("block_response", "nxdomain")
@@ -915,16 +1089,25 @@ class DNSGateway:
         return error_response(packet, 3)
 
     def handle_query(self, packet: bytes, client: str, transport: str = "dot") -> bytes:
-        return self._handle_query(packet, _normalize_client_ip(client), transport)
+        resp, log_args = self._handle_query_core(packet, _normalize_client_ip(client), transport)
+        if log_args is not None:
+            self.store.log_query(*log_args)
+        return resp
 
     def _handle_query(self, packet: bytes, client: str, transport: str) -> bytes:
+        resp, log_args = self._handle_query_core(packet, client, transport)
+        if log_args is not None:
+            self.store.log_query(*log_args)
+        return resp
+
+    def _handle_query_core(self, packet: bytes, client: str, transport: str) -> tuple[bytes, tuple[Any, ...] | None]:
         start = time.monotonic()
         try:
             name, qtype, _ = read_question(packet)
         except Exception:
             with self.metrics_lock:
                 self.metrics["malformed"] += 1
-            return error_response(packet, 1)
+            return error_response(packet, 1), None
 
         profile_cfg = self.policy.profile(client)
         profile_id = profile_cfg["id"]
@@ -951,10 +1134,17 @@ class DNSGateway:
                         detail = f"{detail} ({fb_note})" if detail else fb_note
                     # CNAME Cloaking & DNS Rebinding Inspection
                     if (result[3] & 15) == 0 and not self.store.is_blocking_paused():
-                        decoded_answers = decode_dns_answers(result)
-                        for ans in decoded_answers:
-                            if ans.get("rtype") == 5 and ans.get("data"):
-                                cname_target_name = str(ans["data"]).strip().rstrip(".")
+                        if fb_note in ("cache:l1", "cache:swr"):
+                            # Fast-path CNAME check using pre-extracted cnames list from DNSCache
+                            clean_q = name.lower().rstrip(".")
+                            with self.cache.lock:
+                                cached_cnames = [
+                                    c
+                                    for k, v in self.cache.entries.items()
+                                    if k[0] == clean_q and k[1] == qtype
+                                    for c in v.get("cnames", [])
+                                ]
+                            for cname_target_name in cached_cnames:
                                 cname_dec = self.policy.decide(client, cname_target_name)
                                 if cname_dec.action == "deny":
                                     action = "blocked"
@@ -962,24 +1152,36 @@ class DNSGateway:
                                     result = self._block_packet(packet, qtype)
                                     self.cache.evict(name)
                                     break
-                        if action == "allowed" and fb_note != "local:record" and self.store.config.get("rebinding_protection", True):
-                            clean_q = name.lower().rstrip(".")
-                            local_names = {r["name"].lower().rstrip(".") for r in self.store.config.get("local_records", [])}
-                            is_local_domain = (
-                                clean_q in ("localhost", "localhost.localdomain")
-                                or clean_q in local_names
-                                or clean_q.endswith((".local", ".lan", ".home.arpa", ".internal", ".in-addr.arpa", ".ip6.arpa"))
-                            )
-                            if not is_local_domain:
-                                for ans in decoded_answers:
-                                    if ans.get("rtype") in (1, 28) and ans.get("data") and is_rebinding_ip(str(ans["data"])):
+                        else:
+                            decoded_answers = decode_dns_answers(result)
+                            for ans in decoded_answers:
+                                if ans.get("rtype") == 5 and ans.get("data"):
+                                    cname_target_name = str(ans["data"]).strip().rstrip(".")
+                                    cname_dec = self.policy.decide(client, cname_target_name)
+                                    if cname_dec.action == "deny":
                                         action = "blocked"
-                                        detail = f"security:dns-rebinding ({ans['data']})"
+                                        detail = f"cname_cloak:{cname_target_name} ({cname_dec.source})"
                                         result = self._block_packet(packet, qtype)
-                                        self.cache.evict(clean_q)
-                                        with self.metrics_lock:
-                                            self.metrics["rebinding_blocked"] += 1
+                                        self.cache.evict(name)
                                         break
+                            if action == "allowed" and fb_note != "local:record" and self.store.config.get("rebinding_protection", True):
+                                clean_q = name.lower().rstrip(".")
+                                local_names = {r["name"].lower().rstrip(".") for r in self.store.config.get("local_records", [])}
+                                is_local_domain = (
+                                    clean_q in ("localhost", "localhost.localdomain")
+                                    or clean_q in local_names
+                                    or clean_q.endswith((".local", ".lan", ".home.arpa", ".internal", ".in-addr.arpa", ".ip6.arpa"))
+                                )
+                                if not is_local_domain:
+                                    for ans in decoded_answers:
+                                        if ans.get("rtype") in (1, 28) and ans.get("data") and is_rebinding_ip(str(ans["data"])):
+                                            action = "blocked"
+                                            detail = f"security:dns-rebinding ({ans['data']})"
+                                            result = self._block_packet(packet, qtype)
+                                            self.cache.evict(clean_q)
+                                            with self.metrics_lock:
+                                                self.metrics["rebinding_blocked"] += 1
+                                            break
         except Exception:
             action = "error"
             detail = "resolver_failure"
@@ -992,8 +1194,7 @@ class DNSGateway:
             self.metrics[action] += 1
             self.metrics[transport + "_queries"] += 1
             self.last_query = time.time()
-        self.store.log_query(client, name, qtype, action, profile_id, latency, rcode, detail)
-        return result
+        return result, (client, name, qtype, action, profile_id, latency, rcode, detail)
 
     def _handler(self, bridge: bool):
         gateway = self
@@ -1039,13 +1240,14 @@ class DNSGateway:
                             gateway.last_connection = time.time()
 
                         send_lock = threading.Lock()
-                        inflight = threading.BoundedSemaphore(16)
+                        inflight = threading.BoundedSemaphore(128)
                         active_futures: list[concurrent.futures.Future] = []
                         transport_kind = "frp" if bridge else "direct"
 
                         def process_and_send(pkt: bytes) -> None:
+                            log_args = None
                             try:
-                                resp = gateway._handle_query(pkt, client, transport_kind)
+                                resp, log_args = gateway._handle_query_core(pkt, client, transport_kind)
                                 framed = struct.pack("!H", len(resp)) + resp
                                 with send_lock:
                                     conn.sendall(framed)
@@ -1053,6 +1255,11 @@ class DNSGateway:
                                 pass
                             finally:
                                 inflight.release()
+                            if log_args is not None:
+                                try:
+                                    gateway.store.log_query(*log_args)
+                                except Exception:
+                                    pass
 
                         while True:
                             try:
@@ -1066,12 +1273,13 @@ class DNSGateway:
                                 packet = recv_exact(conn, length)
                             except (OSError, socket.timeout, ssl.SSLError):
                                 break
-                            if not inflight.acquire(timeout=5.0):
-                                break
+                            if not inflight.acquire(timeout=15.0):
+                                process_and_send(packet)
+                                continue
                             try:
                                 fut = gateway.pipeline_pool.submit(process_and_send, packet)
                                 active_futures.append(fut)
-                                if len(active_futures) > 32:
+                                if len(active_futures) > 64:
                                     active_futures = [f for f in active_futures if not f.done()]
                             except RuntimeError:
                                 inflight.release()

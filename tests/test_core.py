@@ -1335,5 +1335,84 @@ class FlagshipV5Tests(unittest.TestCase):
             app.shutdown()
 
 
+    def test_singleflight_parallel_query_coalescing(self):
+        import concurrent.futures
+        from unittest.mock import patch
+        from lattice.transport import DNSGateway, rewrite_response
+
+        certs = CertificateVault(self.store)
+        gw = DNSGateway(self.store, self.policy, certs, 15591, 18931, 18932)
+        call_count = 0
+        count_lock = __import__("threading").Lock()
+
+        def slow_upstream(pkt, upstreams, qname="", routes=None):
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            time.sleep(0.08)
+            return rewrite_response(pkt, 1, "203.0.113.88", ttl=60)
+
+        with patch("lattice.transport.forward_upstream_dot", side_effect=slow_upstream):
+            def run_one(idx: int):
+                q_pkt = _question("photo-cdn.example.com", ident=0x2000 + idx)
+                resp = gw.handle_query(q_pkt, "192.168.1.50", transport="dot")
+                self.assertEqual(resp[:2], struct.pack("!H", 0x2000 + idx))
+                self.assertEqual(resp[3] & 15, 0)
+                return resp
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+                futs = [pool.submit(run_one, i) for i in range(20)]
+                for f in futs:
+                    f.result(timeout=5.0)
+
+        self.assertEqual(call_count, 1)
+        self.assertGreaterEqual(gw.metrics["coalesced_queries"], 10)
+
+    def test_stale_while_revalidate_zero_stall_photo_cdn(self):
+        from unittest.mock import patch
+        from lattice.transport import DNSGateway, rewrite_response
+
+        certs = CertificateVault(self.store)
+        gw = DNSGateway(self.store, self.policy, certs, 15592, 18933, 18934)
+        q_init = _question("scontent.cdn.example.com", ident=0x3001)
+        gw.cache.put("scontent.cdn.example.com", 1, True, rewrite_response(q_init, 1, "203.0.113.99", ttl=30), serve_expired_ttl=3600)
+        # Expire fresh TTL while keeping stale_until valid
+        gw.cache.entries[("scontent.cdn.example.com", 1, True)]["expires_at"] = time.time() - 5.0
+
+        with patch("lattice.transport.forward_upstream_dot", return_value=rewrite_response(q_init, 1, "203.0.113.100", ttl=120)):
+            t0 = time.monotonic()
+            q2 = _question("scontent.cdn.example.com", ident=0x3002)
+            resp, note = gw._forward_query(q2, "scontent.cdn.example.com", 1)
+            elapsed_ms = (time.monotonic() - t0) * 1000.0
+            self.assertLess(elapsed_ms, 15.0)
+            self.assertEqual(note, "cache:swr")
+            self.assertEqual(resp[:2], b"\x30\x02")
+
+    def test_parallel_hedged_upstream_racing(self):
+        from unittest.mock import patch
+        from lattice.transport import forward_upstream_dot, rewrite_response
+
+        upstreams = [
+            {"id": "slow_primary", "name": "Slow", "address": "1.1.1.1", "port": 853, "sni": "cloudflare-dns.com", "enabled": True},
+            {"id": "fast_backup", "name": "Fast", "address": "9.9.9.9", "port": 853, "sni": "dns.quad9.net", "enabled": True},
+        ]
+
+        def mock_pool_query(upstream, out_pkt):
+            if upstream["id"] == "slow_primary":
+                time.sleep(1.2)
+            else:
+                time.sleep(0.02)
+            return rewrite_response(out_pkt, 1, "203.0.113.77", ttl=60)
+
+        with patch("lattice.transport.UPSTREAM_TLS_POOL.query", side_effect=mock_pool_query):
+            t0 = time.monotonic()
+            q = _question("hedged.example.com", ident=0x4455)
+            resp = forward_upstream_dot(q, upstreams, qname="hedged.example.com")
+            elapsed = time.monotonic() - t0
+            self.assertLess(elapsed, 0.55)
+            self.assertEqual(resp[:2], b"\x44\x55")
+            self.assertEqual(resp[3] & 15, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

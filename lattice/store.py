@@ -537,6 +537,7 @@ class Store:
         self.event_cond = threading.Condition()
         self._live_events: collections.deque[dict[str, Any]] = collections.deque(maxlen=200)
         self._event_seq: int = 0
+        self.schedule: dict[str, Any] = self._load_schedule_from_meta()
 
     def _schema(self) -> None:
         with self.lock, self.db:
@@ -641,18 +642,26 @@ class Store:
                 batch,
             )
             if privacy != "strict":
+                dev_agg: dict[str, list[ Any ]] = {}
                 for row in batch:
                     ts_val, client_val = row[0], row[1]
-                    self.db.execute(
-                        """
-                        INSERT INTO devices(ip, first_seen, last_seen, query_count)
-                        VALUES(?, ?, ?, 1)
-                        ON CONFLICT(ip) DO UPDATE SET
-                            last_seen = excluded.last_seen,
-                            query_count = devices.query_count + 1
-                        """,
-                        (client_val, ts_val, ts_val),
-                    )
+                    if client_val not in dev_agg:
+                        dev_agg[client_val] = [ts_val, ts_val, 1]
+                    else:
+                        item = dev_agg[client_val]
+                        if ts_val > item[1]:
+                            item[1] = ts_val
+                        item[2] += 1
+                self.db.executemany(
+                    """
+                    INSERT INTO devices(ip, first_seen, last_seen, query_count)
+                    VALUES(?, ?, ?, ?)
+                    ON CONFLICT(ip) DO UPDATE SET
+                        last_seen = excluded.last_seen,
+                        query_count = devices.query_count + excluded.query_count
+                    """,
+                    [(ip, vals[0], vals[1], vals[2]) for ip, vals in dev_agg.items()],
+                )
 
     def meta(self, key: str, default: Any = None) -> Any:
         with self.lock:
@@ -845,28 +854,13 @@ class Store:
             })
             self.event_cond.notify_all()
 
-        if not self.lock.acquire(blocking=False):
-            with self.queue_lock:
-                self._pending_queries.append(entry)
+        with self.queue_lock:
+            self._pending_queries.append(entry)
+            should_flush = len(self._pending_queries) >= 32
+        if not should_flush or not self.lock.acquire(blocking=False):
             return
         try:
             self._flush_pending_queries_locked()
-            with self.db:
-                self.db.execute(
-                    "INSERT INTO queries(ts,client,domain,qtype,action,profile,latency,rcode,detail) VALUES(?,?,?,?,?,?,?,?,?)",
-                    entry,
-                )
-                if privacy != "strict":
-                    self.db.execute(
-                        """
-                        INSERT INTO devices(ip, first_seen, last_seen, query_count)
-                        VALUES(?, ?, ?, 1)
-                        ON CONFLICT(ip) DO UPDATE SET
-                            last_seen = excluded.last_seen,
-                            query_count = devices.query_count + 1
-                        """,
-                        (client, now, now),
-                    )
         finally:
             self.lock.release()
 
@@ -1139,23 +1133,27 @@ class Store:
 
     def update_device(self, ip: str, name: str, icon: str = "device", profile: str = "*") -> None:
         now = time.time()
-        with self.lock, self.db:
-            self.db.execute(
-                """
-                INSERT INTO devices(ip, name, icon, profile, first_seen, last_seen, query_count)
-                VALUES(?, ?, ?, ?, ?, ?, 0)
-                ON CONFLICT(ip) DO UPDATE SET
-                    name = excluded.name,
-                    icon = excluded.icon,
-                    profile = excluded.profile
-                """,
-                (ip, name, icon, profile, now, now),
-            )
+        with self.lock:
+            self._flush_pending_queries_locked()
+            with self.db:
+                self.db.execute(
+                    """
+                    INSERT INTO devices(ip, name, icon, profile, first_seen, last_seen, query_count)
+                    VALUES(?, ?, ?, ?, ?, ?, 0)
+                    ON CONFLICT(ip) DO UPDATE SET
+                        name = excluded.name,
+                        icon = excluded.icon,
+                        profile = excluded.profile
+                    """,
+                    (ip, name, icon, profile, now, now),
+                )
         self.audit("Device updated", f"{ip}: {name} ({icon}, {profile})")
 
     def delete_device(self, ip: str) -> None:
-        with self.lock, self.db:
-            self.db.execute("DELETE FROM devices WHERE ip=?", (ip,))
+        with self.lock:
+            self._flush_pending_queries_locked()
+            with self.db:
+                self.db.execute("DELETE FROM devices WHERE ip=?", (ip,))
         self.audit("Device deleted", ip)
 
     def export_queries_csv(self, limit: int = 5000, action: str = "", q: str = "", qtype: int = 0) -> str:
@@ -1280,7 +1278,7 @@ class Store:
                     added += 1
         return {"ok": True, "added": added, "installed": added, "total_bundle": len(RECOMMENDED_FEED_BUNDLE), "feeds": self.feed_rows()}
 
-    def get_schedule(self) -> dict[str, Any]:
+    def _load_schedule_from_meta(self) -> dict[str, Any]:
         raw = self.meta("focus_schedule", None)
         merged = copy.deepcopy(DEFAULT_SCHEDULE)
         if isinstance(raw, dict):
@@ -1290,6 +1288,9 @@ class Store:
         merged["start_time"] = merged["start"]
         merged["end_time"] = merged["end"]
         return merged
+
+    def get_schedule(self) -> dict[str, Any]:
+        return copy.deepcopy(self.schedule)
 
     def set_schedule(self, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.get_schedule()
@@ -1327,12 +1328,13 @@ class Store:
             current["profile"] = str(payload["profile"] or "*")
         current["start_time"] = current["start"]
         current["end_time"] = current["end"]
+        self.schedule = copy.deepcopy(current)
         self.set_meta("focus_schedule", current)
         self.audit("Schedule updated", f"enabled={current['enabled']} ({current['start']}-{current['end']}) profile={current['profile']}")
         return current
 
     def is_schedule_active(self, now_ts: float | None = None, profile: str = "*") -> tuple[bool, dict[str, Any]]:
-        sched = self.get_schedule()
+        sched = self.schedule
         if not sched.get("enabled"):
             return False, sched
         target_prof = sched.get("profile", "*") or "*"

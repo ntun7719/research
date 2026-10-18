@@ -1,8 +1,8 @@
 function safeGetStorage(key) {
-  try { return window.localStorage ? window.safeGetStorage(key) : null; } catch (_) { return null; }
+  try { return window.localStorage ? window.localStorage.getItem(key) : null; } catch (_) { return null; }
 }
 function safeSetStorage(key, val) {
-  try { if (window.localStorage) window.safeSetStorage(key, val); } catch (_) {}
+  try { if (window.localStorage) window.localStorage.setItem(key, val); } catch (_) {}
 }
 const state = {
   csrf: "",
@@ -198,7 +198,8 @@ async function refreshRulesAndPresets() {
 }
 
 async function refreshStatus() {
-  if (!state.authenticated) return;
+  if (!state.authenticated || state._refreshingStatus) return;
+  state._refreshingStatus = true;
   try {
     state.status = await api("/api/status?window=" + state.timeWindow);
     renderStatus();
@@ -208,6 +209,8 @@ async function refreshStatus() {
     }
   } catch (error) {
     toast(error.message, true);
+  } finally {
+    state._refreshingStatus = false;
   }
 }
 

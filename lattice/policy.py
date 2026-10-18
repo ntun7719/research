@@ -132,6 +132,7 @@ class Policy:
         self.rules: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.regex_rules: list[tuple[str, re.Pattern[str], dict[str, Any]]] = []
         self.bloom = Bloom()
+        self.feed_index: dict[str, list[tuple[str, str]]] = {}
         self._match_cache: dict[tuple[str, tuple[str, ...]], tuple[str, str] | None] = {}
         self.feed_count = 0
         self.compile()
@@ -164,14 +165,19 @@ class Policy:
 
         with self.store.lock:
             query = (
-                "SELECT DISTINCT fd.domain FROM feed_domains fd "
+                "SELECT fd.domain, fd.category, f.name FROM feed_domains fd "
                 "JOIN feeds f ON f.id=fd.feed_id WHERE f.enabled=1"
             )
-            raw_domains = [row[0] for row in self.store.db.execute(query).fetchall()]
+            feed_rows = [(row[0], row[1], row[2]) for row in self.store.db.execute(query).fetchall()]
         bloom = Bloom()
-        for dom in raw_domains:
-            bloom.add(dom)
-        count = len(raw_domains)
+        feed_index: dict[str, list[tuple[str, str]]] = {}
+        for dom, cat, fname in feed_rows:
+            if dom not in feed_index:
+                bloom.add(dom)
+                feed_index[dom] = [(cat, fname)]
+            else:
+                feed_index[dom].append((cat, fname))
+        count = len(feed_index)
 
         with self.lock:
             self.profile_networks = networks
@@ -179,6 +185,7 @@ class Policy:
             self.rules = rules
             self.regex_rules = regex_list
             self.bloom = bloom
+            self.feed_index = feed_index
             self._match_cache.clear()
             self.feed_count = count
 
@@ -240,26 +247,21 @@ class Policy:
             if cache_key in self._match_cache:
                 return self._match_cache[cache_key]
             bloom = self.bloom
-        candidates = self.parents(name)
-        possible = [candidate for candidate in candidates if bloom.maybe(candidate)]
-        if not possible:
-            with self.lock:
-                if len(self._match_cache) < 16384:
-                    self._match_cache[cache_key] = None
-            return None
-        placeholders_domains = ",".join("?" for _ in possible)
-        placeholders_categories = ",".join("?" for _ in categories)
-        query = (
-            "SELECT fd.domain,fd.category,f.name FROM feed_domains fd "
-            "JOIN feeds f ON f.id=fd.feed_id "
-            f"WHERE f.enabled=1 AND fd.domain IN ({placeholders_domains}) "
-            f"AND fd.category IN ({placeholders_categories}) LIMIT 1"
-        )
-        with self.store.lock:
-            row = self.store.db.execute(query, tuple(possible + categories)).fetchone()
-        result = (row["domain"], row["name"]) if row else None
+            feed_index = self.feed_index
+        cat_set = set(categories)
+        result: tuple[str, str] | None = None
+        for candidate in self.parents(name):
+            if bloom.maybe(candidate):
+                entries = feed_index.get(candidate)
+                if entries:
+                    for cat, fname in entries:
+                        if cat in cat_set:
+                            result = (candidate, fname)
+                            break
+                    if result is not None:
+                        break
         with self.lock:
-            if len(self._match_cache) < 16384:
+            if len(self._match_cache) < 32768:
                 self._match_cache[cache_key] = result
         return result
 

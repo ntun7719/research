@@ -1558,7 +1558,12 @@ def serve() -> None:
     )
     app.start()
     Handler.app = app
-    server = ThreadingHTTPServer(
+    class FastThreadingHTTPServer(ThreadingHTTPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+        request_queue_size = 256
+
+    server = FastThreadingHTTPServer(
         (os.environ.get("WEB_HOST", "0.0.0.0"), int(os.environ.get("PORT", os.environ.get("WEB_PORT", "8080")))),
         Handler,
     )
