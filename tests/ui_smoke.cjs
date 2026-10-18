@@ -23,22 +23,22 @@ const password = process.env.LATTICE_PASSWORD || "integration-password-2468";
   if (!(await page.locator("#queries-total").isVisible())) throw new Error("Dashboard stats are not visible");
   await page.screenshot({ path: "artifacts/dashboard-desktop.png", fullPage: true });
 
-  await page.locator('[data-page="blocking"]').click();
+  await page.locator('#sidebar .nav-item[data-page="blocking"]').click();
   await page.waitForSelector("#page-blocking.active");
   if (!(await page.locator("#category-grid").isVisible())) throw new Error("Protection categories are not visible");
   if (!(await page.locator("#feed-form").isVisible())) throw new Error("Blocklist form is not visible");
   await page.screenshot({ path: "artifacts/blocking-desktop.png", fullPage: true });
 
-  await page.locator('[data-page="dns"]').click();
+  await page.locator('#sidebar .nav-item[data-page="dns"]').click();
   await page.waitForSelector("#page-dns.active");
   if (!(await page.locator("#upstream-editor").isVisible())) throw new Error("Upstream editor is not visible");
 
-  await page.locator('[data-page="private"]').click();
+  await page.locator('#sidebar .nav-item[data-page="private"]').click();
   await page.waitForSelector("#page-private.active");
   if (!(await page.locator("#private-hostname").isVisible())) throw new Error("Private DNS hostname field is not visible");
   if (!(await page.locator("#issue-cert").isVisible())) throw new Error("Certificate action is not visible");
 
-  await page.locator('[data-page="system"]').click();
+  await page.locator('#sidebar .nav-item[data-page="system"]').click();
   await page.waitForSelector("#page-system.active");
   if (!(await page.locator("#privacy-mode").isVisible())) throw new Error("Privacy settings are not visible");
   if (!(await page.locator("#config-editor").isHidden())) throw new Error("Advanced JSON editor should be collapsed by default");
