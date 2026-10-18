@@ -1546,13 +1546,11 @@ class FlagshipV5Tests(unittest.TestCase):
                 resp_rr1, _ = app.gateway._handle_query_core(q_rr1, "192.168.1.50", "dot")
                 self.assertEqual(resp_rr1[3] & 15, 0)
 
-                # Wait briefly for background prefetch_pool to pre-warm rr2..rr5 and jnn-pa.googleapis.com
-                deadline = time.time() + 2.0
-                while time.time() < deadline:
-                    cached_rr2, tag_rr2, _ = app.gateway.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x71\x03")
-                    if cached_rr2 is not None:
-                        break
-                    time.sleep(0.02)
+                # Wait for the queued speculative work, rather than assuming a
+                # busy CI runner can always start and finish it within 2 seconds.
+                # This still verifies that the foreground query actually scheduled
+                # sibling-shard prewarming and that the work populated the cache.
+                app.gateway.prefetch_pool.shutdown(wait=True)
 
                 cached_rr2, tag_rr2, _ = app.gateway.cache.get_swr("rr2---sn-i3b7kn7d.googlevideo.com", 1, False, b"\x71\x03")
                 self.assertIsNotNone(cached_rr2)
